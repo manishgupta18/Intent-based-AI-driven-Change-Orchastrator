@@ -1,0 +1,2448 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>NetBuilder Pro v6</title>
+<script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@300;400;600;700&family=Barlow+Condensed:wght@400;600;700;800;900&display=swap" rel="stylesheet">
+<style>
+:root{--bg:#080c10;--surf:#0d1117;--pan:#111820;--bdr:#1c2836;--bdr2:#243040;--blue:#2d8cf0;--cyan:#00d4aa;--amber:#ffb020;--rose:#ff4560;--green:#00e676;--violet:#7c5cfc;--txt:#c9d8e8;--mut:#4a6070;--dim:#2a3a4a}
+*{box-sizing:border-box;margin:0;padding:0}html,body{height:100%;overflow:hidden;font-family:'IBM Plex Mono',monospace;background:var(--bg);color:var(--txt)}
+body::before{content:'';position:fixed;inset:0;pointer-events:none;z-index:9999;background:repeating-linear-gradient(0deg,transparent,transparent 2px,rgba(0,0,0,.03) 2px,rgba(0,0,0,.03) 4px)}
+/* HEADER */
+.hdr{flex-shrink:0;display:flex;align-items:center;justify-content:space-between;padding:0 18px;height:50px;background:var(--surf);border-bottom:1px solid var(--bdr);position:relative}
+.hdr::after{content:'';position:absolute;bottom:-2px;left:0;right:0;height:2px;background:linear-gradient(90deg,var(--blue),var(--cyan),var(--violet))}
+.logo{display:flex;align-items:center;gap:9px}
+.logo-hex{width:26px;height:26px;background:linear-gradient(135deg,var(--blue),var(--cyan));clip-path:polygon(50% 0%,100% 25%,100% 75%,50% 100%,0% 75%,0% 25%)}
+.logo-t{font-family:'Barlow Condensed',sans-serif;font-size:17px;font-weight:900;color:#fff;text-transform:uppercase;letter-spacing:.05em}
+.logo-t span{color:var(--cyan)}.logo-s{font-size:7px;color:var(--mut);letter-spacing:.25em;text-transform:uppercase;margin-top:1px}
+.hctrl{display:flex;align-items:center;gap:14px}
+.cg{display:flex;flex-direction:column;gap:2px}
+.cl{font-size:7px;font-weight:700;color:var(--mut);letter-spacing:.2em;text-transform:uppercase}
+.cs,.ci{background:transparent;border:none;outline:none;font-family:'IBM Plex Mono',monospace;font-size:11px;font-weight:700;color:var(--cyan);cursor:pointer}
+.ci{width:54px;text-align:right}
+.btn{height:32px;padding:0 16px;border:none;border-radius:3px;font-family:'Barlow Condensed',sans-serif;font-size:12px;font-weight:800;letter-spacing:.1em;text-transform:uppercase;cursor:pointer;position:relative;overflow:hidden;transition:opacity .2s,transform .1s}
+.btn:hover{opacity:.88}.btn:active{transform:scale(.97)}.btn:disabled{opacity:.4;cursor:not-allowed}
+.btn-run{background:linear-gradient(135deg,var(--blue),var(--cyan));color:#fff}
+.btn-run.running{background:var(--dim);color:var(--cyan)}
+.btn-run.running::after{content:'';position:absolute;inset:0;background:linear-gradient(90deg,transparent,rgba(0,212,170,.1),transparent);animation:shimmer 1.5s infinite}
+.btn-disc{background:linear-gradient(135deg,#1a3a2a,var(--green));color:#000}
+.btn-disc.running{background:var(--dim);color:var(--green)}
+.btn-sim{background:linear-gradient(135deg,#2a1a3a,var(--violet));color:#fff}
+.btn-anom{background:linear-gradient(135deg,#3a1a1a,var(--amber));color:#000}
+@keyframes shimmer{from{transform:translateX(-100%)}to{transform:translateX(100%)}}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
+/* PIPELINE */
+.pipe{flex-shrink:0;display:flex;align-items:stretch;background:var(--surf);border-bottom:1px solid var(--bdr);height:44px;padding:0 18px;gap:3px}
+.ps{display:flex;align-items:center;gap:7px;padding:0 10px;border-radius:3px;flex:1;position:relative;transition:background .3s}
+.ps::after{content:'›';position:absolute;right:-5px;color:var(--dim);font-size:14px;z-index:1}
+.ps:last-child::after{display:none}
+.ps.active{background:rgba(45,140,240,.08);border:1px solid rgba(45,140,240,.2)}
+.ps.done{background:rgba(0,230,118,.05);border:1px solid rgba(0,230,118,.15)}
+.ps.error{background:rgba(255,69,96,.08);border:1px solid rgba(255,69,96,.2)}
+.sn{width:18px;height:18px;border-radius:3px;display:flex;align-items:center;justify-content:center;font-size:9px;font-weight:700;flex-shrink:0}
+.idle .sn{background:var(--dim);color:var(--mut)}.active .sn{background:var(--blue);color:#fff;animation:pulse 1s infinite}
+.done .sn{background:var(--green);color:#000}.error .sn{background:var(--rose);color:#fff}
+.snm{font-family:'Barlow Condensed',sans-serif;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;white-space:nowrap}
+.idle .snm{color:var(--mut)}.active .snm{color:var(--blue)}.done .snm{color:var(--green)}.error .snm{color:var(--rose)}
+.stch{font-size:7px;color:var(--mut);letter-spacing:.08em;text-transform:uppercase;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+/* LAYOUT */
+.main{flex:1;display:grid;grid-template-columns:290px 1fr 270px;overflow:hidden}
+.col{border-right:1px solid var(--bdr);display:flex;flex-direction:column;overflow:hidden}
+.col:last-child{border-right:none}
+.ph{flex-shrink:0;padding:7px 13px;background:var(--surf);border-bottom:1px solid var(--bdr);display:flex;align-items:center;justify-content:space-between}
+.pt{font-family:'Barlow Condensed',sans-serif;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.2em;color:var(--mut)}
+.ptag{font-size:7px;font-weight:700;padding:2px 6px;border-radius:2px;text-transform:uppercase;letter-spacing:.1em}
+.pb{flex:1;overflow-y:auto;padding:11px}
+.pb::-webkit-scrollbar{width:3px}.pb::-webkit-scrollbar-thumb{background:var(--dim);border-radius:2px}
+/* TABS */
+.tabbar{flex-shrink:0;display:flex;background:var(--surf);border-bottom:1px solid var(--bdr);padding:0 12px;gap:1px;overflow-x:auto}
+.tabbar::-webkit-scrollbar{height:2px}
+.tab{padding:8px 10px;background:none;border:none;cursor:pointer;font-family:'IBM Plex Mono',monospace;font-size:7.5px;font-weight:700;text-transform:uppercase;letter-spacing:.13em;color:var(--mut);border-bottom:2px solid transparent;transition:color .2s;white-space:nowrap}
+.tab.active{color:var(--cyan);border-bottom-color:var(--cyan)}
+/* INNER TABS */
+.itabbar{display:flex;background:rgba(0,0,0,.3);border-bottom:1px solid var(--bdr);flex-shrink:0;overflow-x:auto}
+.itab{padding:6px 10px;background:none;border:none;cursor:pointer;font-family:'IBM Plex Mono',monospace;font-size:7.5px;font-weight:700;text-transform:uppercase;letter-spacing:.11em;color:var(--mut);border-bottom:2px solid transparent;transition:color .2s;white-space:nowrap}
+.itab.active{color:var(--amber);border-bottom-color:var(--amber)}
+/* INTENT */
+.intent-ta{width:100%;background:#060a0f;border:1px solid var(--bdr2);border-radius:3px;padding:10px;font-family:'IBM Plex Mono',monospace;font-size:11px;line-height:1.7;color:#7ee787;resize:none;outline:none;transition:border-color .2s}
+.intent-ta:focus{border-color:var(--blue)}
+/* TOPO */
+.topo-wrap{flex:1;position:relative;overflow:hidden;background:radial-gradient(ellipse at 50% 50%,rgba(45,140,240,.04) 0%,transparent 70%)}
+.topo-svg{position:absolute;inset:0;width:100%;height:100%}
+.topo-leg{position:absolute;bottom:8px;left:8px;display:flex;gap:8px;flex-wrap:wrap}
+.leg{display:flex;align-items:center;gap:4px;font-size:7.5px;color:var(--mut)}
+.leg-dot{width:7px;height:7px;border-radius:50%}
+/* TABLE */
+.tbl{width:100%;border-collapse:collapse;font-size:8.5px}
+.tbl th{padding:4px 7px;background:var(--surf);color:var(--mut);text-transform:uppercase;letter-spacing:.1em;font-size:7px;text-align:left;border-bottom:1px solid var(--bdr);position:sticky;top:0;z-index:2}
+.tbl td{padding:4px 7px;border-bottom:1px solid rgba(28,40,54,.5);vertical-align:top;line-height:1.5}
+.tbl tr:hover td{background:rgba(45,140,240,.04)}
+/* BADGE */
+.badge{display:inline-block;font-size:7px;font-weight:700;padding:2px 5px;border-radius:2px;text-transform:uppercase;letter-spacing:.07em}
+.b-up{background:rgba(0,230,118,.12);color:var(--green);border:1px solid rgba(0,230,118,.25)}
+.b-dn{background:rgba(255,69,96,.12);color:var(--rose);border:1px solid rgba(255,69,96,.25)}
+.b-warn{background:rgba(255,176,32,.12);color:var(--amber);border:1px solid rgba(255,176,32,.25)}
+.b-blue{background:rgba(45,140,240,.12);color:var(--blue);border:1px solid rgba(45,140,240,.25)}
+.b-gray{background:rgba(74,96,112,.12);color:var(--mut);border:1px solid rgba(74,96,112,.25)}
+.b-vi{background:rgba(124,92,252,.12);color:var(--violet);border:1px solid rgba(124,92,252,.25)}
+/* DECISION */
+.dc{border-radius:4px;padding:12px;margin-bottom:9px;border:1px solid}
+.dc.go{background:rgba(0,230,118,.05);border-color:rgba(0,230,118,.25)}
+.dc.nogo{background:rgba(255,69,96,.05);border-color:rgba(255,69,96,.25)}
+.dc.caution{background:rgba(255,176,32,.05);border-color:rgba(255,176,32,.25)}
+.dv{font-family:'Barlow Condensed',sans-serif;font-size:24px;font-weight:900;letter-spacing:.05em}
+.go .dv{color:var(--green)}.nogo .dv{color:var(--rose)}.caution .dv{color:var(--amber)}
+.rtk{height:5px;background:var(--dim);border-radius:3px;overflow:hidden;margin:4px 0}
+.rf{height:100%;border-radius:3px;transition:width .8s ease}
+/* IMP ROW */
+.imp-row{display:grid;grid-template-columns:16px 1fr auto;gap:7px;padding:5px 0;border-bottom:1px solid var(--bdr);align-items:start}
+.imp-row:last-child{border-bottom:none}
+/* LOG */
+.log-ln{font-size:7.5px;line-height:1.7;padding:1px 0;border-bottom:1px solid rgba(28,40,54,.3);animation:logIn .2s ease}
+@keyframes logIn{from{opacity:0;transform:translateY(2px)}to{opacity:1;transform:translateY(0)}}
+.log-ln{color:var(--mut)}.log-ln.init{color:var(--cyan)}.log-ln.s1{color:#5ba3f0}.log-ln.s2{color:var(--violet)}.log-ln.s3{color:var(--amber)}.log-ln.s4{color:#e8a2ff}.log-ln.s5{color:var(--green)}.log-ln.fatal{color:var(--rose)}.log-ln.ok{color:var(--green);font-weight:600}
+/* EMPTY */
+.empty{display:flex;flex-direction:column;align-items:center;justify-content:center;color:var(--dim);text-align:center;gap:7px;padding:24px;min-height:120px}
+.empty-hex{width:44px;height:44px;background:var(--pan);clip-path:polygon(50% 0%,100% 25%,100% 75%,50% 100%,0% 75%,0% 25%);display:flex;align-items:center;justify-content:center;font-size:18px}
+.empty-t{font-family:'Barlow Condensed',sans-serif;font-size:12px;font-weight:700;color:var(--mut);text-transform:uppercase;letter-spacing:.1em}
+.empty-s{font-size:7.5px;color:var(--dim);max-width:170px}
+/* METRICS */
+.mg{display:grid;grid-template-columns:1fr 1fr;gap:5px;margin-bottom:9px}
+.mc{background:var(--pan);border:1px solid var(--bdr);border-radius:3px;padding:6px 8px}
+.mv{font-family:'Barlow Condensed',sans-serif;font-size:19px;font-weight:700;line-height:1;margin-bottom:2px}
+.ml{font-size:7px;color:var(--mut);text-transform:uppercase;letter-spacing:.14em}
+/* TOOLTIP */
+.ntip{position:absolute;pointer-events:none;background:var(--surf);border:1px solid var(--bdr2);border-radius:3px;padding:8px 11px;font-size:8.5px;line-height:1.7;box-shadow:0 8px 32px rgba(0,0,0,.5);z-index:100;min-width:150px}
+.trow{display:flex;justify-content:space-between;gap:11px}
+.tlbl{color:var(--mut)}.tval{color:var(--cyan);font-weight:600}
+/* CARD */
+.card{background:var(--pan);border:1px solid var(--bdr);border-radius:3px;margin-bottom:5px}
+.card-hdr{display:flex;justify-content:space-between;align-items:center;padding:7px 10px;cursor:pointer}
+.card-body{padding:0 10px 8px;border-top:1px solid var(--bdr);display:none}
+.card.open .card-body{display:block}
+/* DIFF */
+.diff-added{background:rgba(0,230,118,.08);border-left:3px solid var(--green);padding:2px 8px;font-size:8.5px;color:var(--green);font-family:'IBM Plex Mono',monospace;white-space:pre-wrap}
+.diff-removed{background:rgba(255,69,96,.08);border-left:3px solid var(--rose);padding:2px 8px;font-size:8.5px;color:var(--rose);font-family:'IBM Plex Mono',monospace;white-space:pre-wrap;text-decoration:line-through}
+.diff-unchanged{padding:2px 8px;font-size:8.5px;color:var(--mut);font-family:'IBM Plex Mono',monospace;white-space:pre-wrap}
+/* ANOMALY */
+.anom-card{border-radius:3px;padding:8px 10px;margin-bottom:5px;border:1px solid}
+.anom-CRITICAL{background:rgba(255,69,96,.06);border-color:rgba(255,69,96,.3)}
+.anom-HIGH{background:rgba(255,176,32,.05);border-color:rgba(255,176,32,.25)}
+.anom-MEDIUM{background:rgba(45,140,240,.05);border-color:rgba(45,140,240,.2)}
+.anom-LOW{background:rgba(74,96,112,.05);border-color:rgba(74,96,112,.2)}
+/* CHAT */
+.chat-wrap{flex:1;display:flex;flex-direction:column;overflow:hidden}
+.chat-msgs{flex:1;overflow-y:auto;padding:11px;display:flex;flex-direction:column;gap:8px}
+.chat-bubble{padding:8px 11px;border-radius:4px;font-size:8.5px;line-height:1.6;max-width:90%}
+.chat-user{background:rgba(45,140,240,.1);border:1px solid rgba(45,140,240,.2);color:var(--blue);align-self:flex-end}
+.chat-ai{background:var(--pan);border:1px solid var(--bdr);color:var(--txt);align-self:flex-start}
+.chat-thinking{color:var(--mut);font-style:italic}
+.chat-input-row{flex-shrink:0;display:flex;gap:7px;padding:9px 11px;border-top:1px solid var(--bdr);background:var(--surf)}
+.chat-input{flex:1;background:#060a0f;border:1px solid var(--bdr2);border-radius:3px;padding:7px 10px;font-family:'IBM Plex Mono',monospace;font-size:9px;color:var(--txt);outline:none;transition:border-color .2s}
+.chat-input:focus{border-color:var(--blue)}
+/* DISC STATUS */
+.disc-status{flex-shrink:0;padding:5px 11px;background:rgba(0,230,118,.05);border-bottom:1px solid rgba(0,230,118,.15);font-size:7.5px;color:var(--green);display:flex;align-items:center;gap:7px}
+.disc-dot{width:6px;height:6px;border-radius:50%;background:var(--green);animation:pulse 2s infinite}
+/* vi */
+.vi{display:flex;gap:6px;align-items:flex-start;padding:4px 0;border-bottom:1px solid var(--bdr);font-size:8.5px;line-height:1.5}
+.vi:last-child{border-bottom:none}
+.vdot{width:5px;height:5px;border-radius:50%;flex-shrink:0;margin-top:4px}
+::-webkit-scrollbar{width:3px;height:3px}::-webkit-scrollbar-thumb{background:var(--dim)}
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const {useState,useEffect,useRef,useCallback} = React;
+
+const API = 'http://localhost:5001';
+const STAGES = [
+  {id:0,name:'Collect',tech:'cdp·lldp·ospf·bgp [pyATS]'},
+  {id:1,name:'iGraph',tech:'betweenness·pagerank [local]'},
+  {id:2,name:'Heal',tech:'risk loop·constraints [LLM]'},
+  {id:3,name:'Validate',tech:'ip·area·hallucination [local]'},
+  {id:4,name:'Decision',tech:'go/no-go·blast·rollback [LLM]'},
+];
+// MCP Pipeline 8-phase execution model
+const MCP_PHASES = [
+  {id:0,name:'Intent',tech:'LLM→domains',icon:'⬡'},
+  {id:1,name:'Select',tech:'Supervisor→agents',icon:'◈'},
+  {id:2,name:'Testbed',tech:'MCP→Netmiko+pyATS',icon:'⚡'},
+  {id:3,name:'Snapshot',tech:'Genie Learn API',icon:'📸'},
+  {id:4,name:'Agents',tech:'MCP→Genie→JSON',icon:'⊕'},
+  {id:5,name:'Genie Diff',tech:'PRE vs POST',icon:'⬡'},
+  {id:6,name:'Synthesis',tech:'LLM→verdict',icon:'⬡'},
+  {id:7,name:'Result',tech:'GUI assembly',icon:'◆'},
+];
+const MAIN_TABS = ['decision','topology','simulate','anomaly','mcp','agents','healing','validation','config','twin','inventory','chat'];
+const INV_TABS  = ['interfaces','protocols','ip address','acl','route-map','logs'];
+const SEV_COLOR = {CRITICAL:'var(--rose)',HIGH:'var(--amber)',MEDIUM:'var(--blue)',LOW:'var(--mut)'};
+
+// ─── helpers ──────────────────────────────────────────────────────────────
+const rc = s => s<=3?'var(--green)':s<=6?'var(--amber)':'var(--rose)';
+const vcls = v => ({GO:'go','NO-GO':'nogo','PROCEED WITH CAUTION':'caution'}[v]||'caution');
+const sbadge = s => {
+  const sl=(s||'').toLowerCase();
+  if(['up','full','established','active'].some(x=>sl.includes(x))) return 'badge b-up';
+  if(['down','idle','inactive'].some(x=>sl.includes(x))) return 'badge b-dn';
+  if(sl.includes('admin')) return 'badge b-warn';
+  return 'badge b-gray';
+};
+const lc = line => {
+  if(line.includes('[INIT]')||line.includes('[DONE]')) return 'init';
+  if(line.includes('STAGE 1')||line.includes('[INV]')||line.includes('[TOPO]')||line.includes('[COLLECT]')||line.includes('[DISCOVER]')) return 's1';
+  if(line.includes('STAGE 2')) return 's2';
+  if(line.includes('STAGE 3')) return 's3';
+  if(line.includes('STAGE 4')) return 's4';
+  if(line.includes('STAGE 5')) return 's5';
+  if(line.includes('[FATAL]')||line.includes('ERROR')) return 'fatal';
+  if(line.toLowerCase().includes('done')||line.toLowerCase().includes('complete')) return 'ok';
+  return '';
+};
+
+function parseDecision(text){
+  if(!text) return null;
+  // LLM backend errors — surface as null so the UI can show a proper error state
+  if(/^(Ollama Error:|Claude Error:)/i.test(text.trim())) return null;
+  // Normalize markdown formatting that local models (Ollama) add:
+  //   **DECISION:** → DECISION:   |   ### Heading → (dropped)
+  text = text.replace(/\*\*/g,'').replace(/^#{1,3}\s+/gm,'');
+  const g = pat => { const m=text.match(pat); return m?m[1].trim():''; };
+  const verdict = g(/^DECISION:\s*(.+)$/m).toUpperCase().replace(/[.*[\]]/g,'').trim();
+  const riskScore = parseFloat((g(/^RISK_SCORE:\s*(.+)$/m).match(/(\d+(?:\.\d+)?)/)||[,5])[1]);
+  const summary = g(/^INTENT_SUMMARY:\s*(.+)$/m);
+  const reasoning = g(/^REASONING:\s*([\s\S]*?)(?=\n[A-Z_]+:|$)/m);
+  const domKeys = [
+    ['customer_reachability',/^CUSTOMER_REACHABILITY:\s*(.+)$/m],
+    ['routing_convergence',/^ROUTING_CONVERGENCE:\s*(.+)$/m],
+    ['network_announcement',/^NETWORK_ANNOUNCEMENT:\s*(.+)$/m],
+    ['redundancy',/^REDUNDANCY:\s*(.+)$/m],
+    ['policy',/^POLICY:\s*(.+)$/m],
+    ['service_continuity',/^SERVICE_CONTINUITY:\s*(.+)$/m],
+    ['blast_radius_dom',/^BLAST_RADIUS:\s*(.+)$/m],
+  ];
+  const impacts = {};
+  for(const [key,pat] of domKeys){
+    const raw = g(pat);
+    if(raw){
+      // Accept both em-dash (—) and plain hyphen ( - ) as the separator
+      const emDash = raw.indexOf('\u2014');
+      const plainDash = raw.indexOf(' - ');
+      const di = emDash>-1 ? emDash : plainDash>-1 ? plainDash : -1;
+      const sepLen = (di===emDash && di>-1) ? 1 : 3; // '—'=1 char, ' - '=3 chars
+      const sp = di>-1?raw.slice(0,di).trim():raw.split(' ')[0];
+      const detail = di>-1?raw.slice(di+sepLen).trim():raw;
+      let status = 'UNKNOWN';
+      if(sp.includes('NOT_IMPACTED')) status='NOT_IMPACTED';
+      else if(sp.includes('IMPACTED')) status='IMPACTED';
+      impacts[key]={status,detail};
+    }
+  }
+  const eb = g(/^EXECUTION_PLAN:\s*([\s\S]*?)(?=\nROLLBACK:|$)/m);
+  const rb = g(/^ROLLBACK:\s*([\s\S]*?)(?=\nREASONING:|$)/m);
+  const ps = r => r?r.trim().split('\n').map(l=>l.replace(/^\d+\.\s*/,'').trim()).filter(Boolean):[];
+  return {verdict,riskScore,summary,impacts,reasoning,execSteps:ps(eb),rollback:ps(rb)};
+}
+
+// ─── TOPOLOGY VISUALISER ──────────────────────────────────────────────────
+function TopoViz({physTopo,igraphTopo,critNodes}){
+  const [tip,setTip] = useState(null);
+  const svgRef = useRef(null);
+  const critMap = {};
+  (critNodes||[]).forEach(n=>{critMap[n.id]=n.criticality});
+  const igMap = {};
+  (igraphTopo?.nodes||[]).forEach(n=>{igMap[n.id]=n});
+
+  let nodes=[], edges=[];
+  if(physTopo?.nodes?.length){
+    nodes = physTopo.nodes.map(n=>({...n,criticality:critMap[n.id]||igMap[n.id]?.criticality||0,ig:igMap[n.id]||null}));
+    edges = physTopo.edges||[];
+  } else if(igraphTopo?.nodes?.length){
+    nodes = igraphTopo.nodes.map(n=>({...n,label:n.id,type:'ospf'}));
+    edges = (igraphTopo.edges||[]).map(e=>({source:e.source,target:e.target,source_proto:'OSPF',link_type:'logical_l3'}));
+  }
+
+  if(!nodes.length) return(
+    <div className="empty"><div className="empty-hex">⬡</div><div className="empty-t">No Topology</div>
+      <div className="empty-s">Run Discovery or Pipeline to build topology</div></div>
+  );
+
+  const W=660,H=390,CX=W/2,CY=H/2;
+  const LOCAL = physTopo?.local_node||nodes.find(n=>n.type==='local')?.id;
+
+  // Build position map — local at center, others in ring by type
+  const nonLocal = nodes.filter(n=>n.id!==LOCAL&&n.type!=='local');
+  const posMap = {};
+  if(LOCAL) posMap[LOCAL]={x:CX,y:CY};
+  nonLocal.forEach((node,i)=>{
+    const angle=(2*Math.PI*i/Math.max(nonLocal.length,1))-(Math.PI/2);
+    const r = node.criticality>.6?95:node.type==='ospf'||node.type==='ospf_db'?140:160;
+    posMap[node.id]={x:CX+r*Math.cos(angle),y:CY+r*Math.sin(angle)};
+  });
+
+  // Multi-link: group edges by source+target pair, offset parallel edges
+  const edgeGroups = {};
+  edges.forEach((e,i)=>{
+    const key=`${e.source}|${e.target}`;
+    if(!edgeGroups[key]) edgeGroups[key]=[];
+    edgeGroups[key].push({...e,idx:i});
+  });
+
+  const nodeColor = n => {
+    if(n.id===LOCAL||n.type==='local') return 'var(--cyan)';
+    if(n.criticality>.6) return 'var(--rose)';
+    if(n.type==='cdp') return 'var(--blue)';
+    if(n.type==='lldp') return 'var(--violet)';
+    if(n.type==='ospf_db') return '#66bb6a';
+    return 'var(--amber)';
+  };
+  const edgeColor = e => e.source_proto==='CDP'?'var(--blue)':e.source_proto==='LLDP'?'var(--violet)':e.link_type==='logical_ospf_db'?'#66bb6a55':'var(--amber)';
+  const nodeR = n => n.id===LOCAL||n.type==='local'?12:6+Math.round((n.criticality||0)*8);
+
+  return(
+    <div className="topo-wrap">
+      <svg className="topo-svg" ref={svgRef} viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="xMidYMid meet">
+        <defs>
+          <radialGradient id="gLoc" cx="50%" cy="50%" r="50%">
+            <stop offset="0%" stopColor="#00d4aa" stopOpacity="0.2"/><stop offset="100%" stopColor="#00d4aa" stopOpacity="0"/>
+          </radialGradient>
+          <filter id="glow"><feGaussianBlur stdDeviation="2"/></filter>
+        </defs>
+
+        {/* Edges — render ALL including multi-link with parallel offset */}
+        {Object.entries(edgeGroups).map(([key,groupEdges])=>
+          groupEdges.map((e,groupIdx)=>{
+            const s=posMap[e.source],t=posMap[e.target];
+            if(!s||!t) return null;
+            const count=groupEdges.length;
+            const mx=(s.x+t.x)/2,my=(s.y+t.y)/2;
+            // Offset parallel edges perpendicular to the line
+            const dx=t.x-s.x,dy=t.y-s.y,len=Math.sqrt(dx*dx+dy*dy)||1;
+            const nx=-dy/len,ny=dx/len; // normal
+            const offset=(groupIdx-(count-1)/2)*8;
+            const sx=s.x+nx*offset,sy=s.y+ny*offset;
+            const tx2=t.x+nx*offset,ty2=t.y+ny*offset;
+            const midx=mx+nx*offset,midy=my+ny*offset;
+            return(
+              <g key={`${key}-${groupIdx}`}>
+                <line x1={sx} y1={sy} x2={tx2} y2={ty2}
+                  stroke={edgeColor(e)} strokeWidth={e.link_type==='physical'?1.5:.8}
+                  strokeOpacity={.55} strokeDasharray={e.link_type!=='physical'?'5,4':'none'}/>
+                {e.local_if&&count<4&&(
+                  <text x={midx} y={midy-4} fill="var(--mut)" fontSize="6.5" textAnchor="middle">
+                    {(e.local_if||'').replace('GigabitEthernet','Gi').replace('FastEthernet','Fa')}
+                  </text>
+                )}
+                <circle cx={midx} cy={midy} r={2} fill={edgeColor(e)} fillOpacity={.7}/>
+              </g>
+            );
+          })
+        )}
+
+        {/* Local glow */}
+        {posMap[LOCAL]&&<circle cx={posMap[LOCAL].x} cy={posMap[LOCAL].y} r={26} fill="url(#gLoc)" filter="url(#glow)"/>}
+
+        {/* Nodes */}
+        {nodes.map(node=>{
+          const pos=posMap[node.id]; if(!pos) return null;
+          const isLocal=node.id===LOCAL||node.type==='local';
+          const r=nodeR(node);
+          return(
+            <g key={node.id} style={{cursor:'pointer'}}
+              onMouseEnter={ev=>{const rect=svgRef.current.getBoundingClientRect();setTip({node,x:ev.clientX-rect.left,y:ev.clientY-rect.top})}}
+              onMouseLeave={()=>setTip(null)}>
+              {isLocal
+                ?<polygon points={`${pos.x},${pos.y-r} ${pos.x+r*.87},${pos.y+r*.5} ${pos.x-r*.87},${pos.y+r*.5}`}
+                    fill="var(--cyan)" fillOpacity={.9} stroke="#fff" strokeWidth={1.5}/>
+                :<circle cx={pos.x} cy={pos.y} r={r} fill={nodeColor(node)} fillOpacity={.85}
+                    stroke={node.criticality>.6?'var(--rose)':'var(--bdr2)'} strokeWidth={1.5}/>
+              }
+              <text x={pos.x} y={pos.y+r+10} fill="var(--txt)" fontSize="7.5" textAnchor="middle">{(node.label||node.id).slice(0,16)}</text>
+              {!isLocal&&<text x={pos.x} y={pos.y+r+18} fill="var(--mut)" fontSize="6" textAnchor="middle">{(node.type||'').toUpperCase()}</text>}
+            </g>
+          );
+        })}
+      </svg>
+
+      {tip&&(
+        <div className="ntip" style={{left:tip.x+13,top:tip.y-8}}>
+          <div style={{fontWeight:700,color:'#fff',marginBottom:4,fontSize:9}}>{tip.node.id}</div>
+          <div className="trow"><span className="tlbl">Type</span><span className="tval">{tip.node.type||'—'}</span></div>
+          {tip.node.platform&&<div className="trow"><span className="tlbl">Platform</span><span className="tval">{tip.node.platform}</span></div>}
+          {tip.node.criticality>0&&<div className="trow"><span className="tlbl">Centrality</span><span className="tval">{(tip.node.criticality*100).toFixed(1)}%</span></div>}
+          {tip.node.ig&&<div className="trow"><span className="tlbl">Betweenness</span><span className="tval">{(tip.node.ig.betweenness*100).toFixed(1)}%</span></div>}
+          {tip.node.ig&&<div className="trow"><span className="tlbl">Degree</span><span className="tval">{tip.node.ig.degree}</span></div>}
+        </div>
+      )}
+
+      <div className="topo-leg">
+        <div className="leg"><div className="leg-dot" style={{background:'var(--cyan)'}}></div>Local▲</div>
+        <div className="leg"><div className="leg-dot" style={{background:'var(--blue)'}}></div>CDP (phys)</div>
+        <div className="leg"><div className="leg-dot" style={{background:'var(--violet)'}}></div>LLDP (phys)</div>
+        <div className="leg"><div className="leg-dot" style={{background:'var(--amber)'}}></div>OSPF (L3)</div>
+        <div className="leg"><div className="leg-dot" style={{background:'#66bb6a'}}></div>OSPF-DB</div>
+        <div className="leg"><div className="leg-dot" style={{background:'var(--rose)'}}></div>Critical</div>
+        <div className="leg" style={{fontSize:7,color:'var(--mut)'}}>Parallel lines = multi-link</div>
+      </div>
+    </div>
+  );
+}
+
+// ─── COLLAPSIBLE CARD ─────────────────────────────────────────────────────
+function ColCard({title,badge,badgeCls,count,children}){
+  const [open,setOpen]=useState(false);
+  return(
+    <div className="card" style={{marginBottom:5}}>
+      <div className="card-hdr" onClick={()=>setOpen(!open)}>
+        <div style={{display:'flex',alignItems:'center',gap:8}}>
+          <span style={{fontWeight:700,color:'var(--cyan)',fontSize:9.5}}>{title}</span>
+          {badge&&<span className={`badge ${badgeCls||'b-gray'}`}>{badge}</span>}
+        </div>
+        <div style={{display:'flex',gap:7,alignItems:'center'}}>
+          {count!=null&&<span style={{fontSize:7.5,color:'var(--mut)'}}>{count}</span>}
+          <span style={{color:'var(--mut)',fontSize:9}}>{open?'▲':'▼'}</span>
+        </div>
+      </div>
+      {open&&<div className="card-body" style={{paddingTop:8}}>{children}</div>}
+    </div>
+  );
+}
+
+// ─── INVENTORY PANEL ──────────────────────────────────────────────────────
+function InventoryPanel({inventory,twin}){
+  const [sub,setSub]=useState('interfaces');
+  const inv=inventory||{};
+
+  return(
+    <div style={{display:'flex',flexDirection:'column',flex:1,overflow:'hidden'}}>
+      <div className="itabbar">
+        {INV_TABS.map(t=><button key={t} className={`itab${sub===t?' active':''}`} onClick={()=>setSub(t)}>{t}</button>)}
+      </div>
+
+      {/* INTERFACES */}
+      {sub==='interfaces'&&(
+        <div className="pb">
+          {!inv.interfaces?.length?<div className="empty"><div className="empty-hex">⬡</div><div className="empty-t">No Interface Data</div></div>
+          :<table className="tbl"><thead><tr>
+            <th>Interface</th><th>Status</th><th>IP Address(es)</th><th>Speed</th><th>MTU</th><th>Description</th><th>In Err</th><th>Out Err</th>
+          </tr></thead><tbody>
+            {inv.interfaces.map((ifc,i)=>(
+              <tr key={i}>
+                <td style={{color:'var(--cyan)',fontWeight:600,whiteSpace:'nowrap',fontSize:8}}>{ifc.name}</td>
+                <td><span className={sbadge(ifc.oper_status)}>{ifc.oper_status}</span></td>
+                <td style={{color:'var(--amber)',fontSize:8}}>{(ifc.ip_addresses||[]).join('\n')||'—'}</td>
+                <td style={{fontSize:8}}>{ifc.speed||ifc.bandwidth||'—'}</td>
+                <td style={{fontSize:8}}>{ifc.mtu||'—'}</td>
+                <td style={{color:'var(--mut)',fontSize:8}}>{ifc.description||'—'}</td>
+                <td style={{color:ifc.in_errors>0?'var(--rose)':'var(--mut)',fontSize:8}}>{ifc.in_errors||0}</td>
+                <td style={{color:ifc.out_errors>0?'var(--rose)':'var(--mut)',fontSize:8}}>{ifc.out_errors||0}</td>
+              </tr>
+            ))}
+          </tbody></table>}
+        </div>
+      )}
+
+      {/* PROTOCOLS */}
+      {sub==='protocols'&&(
+        <div className="pb" style={{display:'flex',flexDirection:'column',gap:12}}>
+
+          {/* OSPF */}
+          <div>
+            <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:7}}>
+              <span style={{fontFamily:'Barlow Condensed,sans-serif',fontSize:14,fontWeight:700,color:'var(--cyan)',textTransform:'uppercase'}}>OSPF</span>
+              <span className={inv.protocols?.ospf?.enabled?'badge b-up':'badge b-gray'}>{inv.protocols?.ospf?.enabled?'Active':'Not Detected'}</span>
+            </div>
+            {inv.protocols?.ospf?.enabled&&<>
+              <div style={{fontSize:7,color:'var(--mut)',textTransform:'uppercase',letterSpacing:'.15em',marginBottom:4}}>Neighbours ({(inv.protocols.ospf.neighbors||[]).length})</div>
+              <table className="tbl" style={{marginBottom:8}}><thead><tr>
+                <th>Neighbour ID</th><th>State</th><th>Interface</th><th>Area</th><th>Address</th><th>Uptime</th>
+              </tr></thead><tbody>
+                {(inv.protocols.ospf.neighbors||[]).length
+                  ?(inv.protocols.ospf.neighbors.map((n,i)=>(
+                    <tr key={i}>
+                      <td style={{color:'var(--amber)',fontWeight:600}}>{n.neighbor_id}</td>
+                      <td><span className={sbadge(n.state)}>{n.state||'—'}</span></td>
+                      <td style={{fontSize:8}}>{n.interface||'—'}</td>
+                      <td>{n.area||'—'}</td>
+                      <td style={{color:'var(--cyan)',fontSize:8}}>{n.address||'—'}</td>
+                      <td style={{color:'var(--mut)',fontSize:8}}>{n.uptime||'—'}</td>
+                    </tr>)))
+                  :<tr><td colSpan={6} style={{color:'var(--mut)',textAlign:'center',padding:8}}>No neighbours</td></tr>
+                }
+              </tbody></table>
+              <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:9}}>
+                <div>
+                  <div style={{fontSize:7,color:'var(--mut)',textTransform:'uppercase',letterSpacing:'.14em',marginBottom:3}}>Routes Received ({inv.protocols.ospf.route_count_rx||0})</div>
+                  <div style={{maxHeight:150,overflowY:'auto'}}>
+                    {(inv.protocols.ospf.routes_received||[]).map((r,i)=>(
+                      <div key={i} style={{padding:'2px 4px',borderBottom:'1px solid var(--bdr)',fontSize:8}}>
+                        <span style={{color:'var(--cyan)'}}>{r.prefix}</span>
+                        {r.next_hop&&<span style={{color:'var(--mut)'}}> via {r.next_hop}</span>}
+                      </div>))}
+                    {!inv.protocols.ospf.routes_received?.length&&<div style={{fontSize:8,color:'var(--mut)',padding:'3px 4px'}}>None</div>}
+                  </div>
+                </div>
+                <div>
+                  <div style={{fontSize:7,color:'var(--mut)',textTransform:'uppercase',letterSpacing:'.14em',marginBottom:3}}>Locally Advertised</div>
+                  <div style={{maxHeight:150,overflowY:'auto'}}>
+                    {(inv.protocols.ospf.routes_advertised||[]).map((r,i)=>(
+                      <div key={i} style={{padding:'2px 4px',borderBottom:'1px solid var(--bdr)',fontSize:8,color:'var(--green)'}}>{r}</div>))}
+                    {!inv.protocols.ospf.routes_advertised?.length&&<div style={{fontSize:8,color:'var(--mut)',padding:'3px 4px'}}>None</div>}
+                  </div>
+                </div>
+              </div>
+            </>}
+          </div>
+
+          {/* BGP */}
+          <div>
+            <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:7}}>
+              <span style={{fontFamily:'Barlow Condensed,sans-serif',fontSize:14,fontWeight:700,color:'var(--violet)',textTransform:'uppercase'}}>BGP</span>
+              <span className={inv.protocols?.bgp?.enabled?'badge b-up':'badge b-gray'}>{inv.protocols?.bgp?.enabled?`Active (${inv.protocols.bgp.neighbor_count||0} peers)`:'Not Detected'}</span>
+            </div>
+            {inv.protocols?.bgp?.enabled&&inv.protocols.bgp.neighbors?.length>0&&(
+              <table className="tbl" style={{marginBottom:8}}><thead><tr>
+                <th>Neighbour</th><th>Remote AS</th><th>State</th><th>Pfx Rx</th><th>Pfx Tx</th><th>Uptime</th><th>VRF</th><th>Description</th>
+              </tr></thead><tbody>
+                {inv.protocols.bgp.neighbors.map((n,i)=>(
+                  <tr key={i}>
+                    <td style={{color:'var(--amber)',fontWeight:600,fontSize:8}}>{n.neighbor}</td>
+                    <td style={{fontSize:8}}>{n.remote_as||'—'}</td>
+                    <td><span className={sbadge(n.state)}>{n.state||'—'}</span></td>
+                    <td style={{color:'var(--cyan)',fontSize:8}}>{n.prefixes_received||'—'}</td>
+                    <td style={{color:'var(--green)',fontSize:8}}>{n.prefixes_sent||'—'}</td>
+                    <td style={{color:'var(--mut)',fontSize:8}}>{n.uptime||'—'}</td>
+                    <td style={{color:'var(--mut)',fontSize:8}}>{n.vrf||'default'}</td>
+                    <td style={{color:'var(--mut)',fontSize:8}}>{n.description||'—'}</td>
+                  </tr>))}
+              </tbody></table>
+            )}
+            {!inv.protocols?.bgp?.enabled&&(
+              <div style={{fontSize:8,color:'var(--mut)',padding:'4px 0'}}>BGP not running or no summary available. Ensure 'show ip bgp summary' is reachable.</div>
+            )}
+          </div>
+
+          {/* Static */}
+          <div>
+            <div style={{fontFamily:'Barlow Condensed,sans-serif',fontSize:14,fontWeight:700,color:'var(--amber)',textTransform:'uppercase',marginBottom:7}}>
+              Static Routes ({(inv.protocols?.static||[]).length})
+            </div>
+            {(inv.protocols?.static||[]).length>0&&(
+              <table className="tbl"><thead><tr><th>Prefix</th><th>Next Hop</th></tr></thead><tbody>
+                {inv.protocols.static.map((r,i)=>(
+                  <tr key={i}><td style={{color:'var(--cyan)'}}>{r.prefix}</td><td style={{color:'var(--amber)'}}>{r.next_hop||'—'}</td></tr>))}
+              </tbody></table>)}
+          </div>
+
+          {/* CDP table */}
+          {inv.cdp_neighbors?.length>0&&(
+            <div>
+              <div style={{fontFamily:'Barlow Condensed,sans-serif',fontSize:14,fontWeight:700,color:'var(--blue)',textTransform:'uppercase',marginBottom:7}}>
+                CDP Neighbors ({inv.cdp_neighbors.length})
+              </div>
+              <table className="tbl"><thead><tr>
+                <th>Device</th><th>Local IF</th><th>Remote IF</th><th>IP</th><th>Platform</th>
+              </tr></thead><tbody>
+                {inv.cdp_neighbors.map((n,i)=>(
+                  <tr key={i}>
+                    <td style={{color:'var(--blue)',fontWeight:600,fontSize:8}}>{n.device_id}</td>
+                    <td style={{fontSize:8}}>{n.local_interface}</td>
+                    <td style={{fontSize:8}}>{n.remote_interface}</td>
+                    <td style={{color:'var(--cyan)',fontSize:8}}>{n.ip||'—'}</td>
+                    <td style={{color:'var(--mut)',fontSize:8}}>{n.platform}</td>
+                  </tr>))}
+              </tbody></table>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* IP ADDRESS */}
+      {sub==='ip address'&&(
+        <div className="pb">
+          {!inv.ip_addresses?.length?<div className="empty"><div className="empty-hex">⬡</div><div className="empty-t">No IP Data</div></div>
+          :<table className="tbl"><thead><tr>
+            <th>Interface</th><th>IP / CIDR</th><th>IP Address</th><th>/Pfx</th><th>Type</th><th>Status</th>
+          </tr></thead><tbody>
+            {inv.ip_addresses.map((ip,i)=>(
+              <tr key={i}>
+                <td style={{color:'var(--cyan)',fontWeight:600,fontSize:8}}>{ip.interface}</td>
+                <td style={{color:'var(--amber)',fontSize:8}}>{ip.ip_cidr}</td>
+                <td style={{fontSize:8}}>{ip.ip}</td>
+                <td style={{color:'var(--mut)',fontSize:8}}>/{ip.prefix}</td>
+                <td><span className="badge b-blue">{ip.type}</span></td>
+                <td><span className={sbadge(ip.status)}>{ip.status}</span></td>
+              </tr>))}
+          </tbody></table>}
+        </div>
+      )}
+
+      {/* ACL */}
+      {sub==='acl'&&(
+        <div className="pb">
+          {!inv.acl?.length
+            ?<div style={{textAlign:'center',padding:'20px',color:'var(--mut)',fontSize:8.5}}>No ACLs found</div>
+            :(inv.acl||[]).map((acl,i)=>(
+              <ColCard key={i} title={acl.name} badge={acl.type||'ip'} badgeCls="b-blue" count={`${acl.aces?.length||0} ACEs`}>
+                {acl.applied_interfaces?.length>0&&(
+                  <div style={{fontSize:8,color:'var(--amber)',marginBottom:5}}>Applied: {acl.applied_interfaces.join(', ')}</div>
+                )}
+                {(acl.aces||[]).map((ace,j)=>(
+                  <div key={j} style={{display:'flex',gap:7,padding:'3px 0',borderBottom:'1px solid rgba(28,40,54,.4)',fontSize:8.5,alignItems:'flex-start'}}>
+                    <span style={{color:'var(--mut)',width:26,flexShrink:0,fontSize:8}}>{ace.seq}</span>
+                    {ace.action&&<span className={`badge ${ace.action==='permit'?'b-up':'b-dn'}`} style={{flexShrink:0}}>{ace.action}</span>}
+                    <span style={{flex:1}}>{ace.proto?`${ace.proto} `:''}{ace.src?`src:${ace.src} `:''}{ace.dst?`dst:${ace.dst}`:''}{ace.text||''}</span>
+                    {ace.hits>0&&<span style={{color:'var(--amber)',fontSize:8,flexShrink:0}}>{ace.hits} hits</span>}
+                  </div>))}
+              </ColCard>))}
+        </div>
+      )}
+
+      {/* ROUTE-MAP */}
+      {sub==='route-map'&&(
+        <div className="pb">
+          {!inv.route_maps?.length
+            ?<div style={{textAlign:'center',padding:'20px',color:'var(--mut)',fontSize:8.5}}>No route-maps found</div>
+            :(inv.route_maps||[]).map((rm,i)=>(
+              <ColCard key={i} title={rm.name} badgeCls="b-vi" count={`${rm.sequences?.length||0} seq`}>
+                {(rm.sequences||[]).map((seq,j)=>(
+                  <div key={j} style={{marginBottom:6,paddingBottom:6,borderBottom:'1px solid var(--bdr)'}}>
+                    <div style={{display:'flex',gap:7,alignItems:'center',marginBottom:3}}>
+                      <span className={`badge ${seq.action==='permit'?'b-up':'b-dn'}`}>{seq.action||'permit'}</span>
+                      <span style={{fontSize:8,color:'var(--mut)'}}>seq {seq.seq}</span>
+                    </div>
+                    {seq.body&&<pre style={{fontSize:8,color:'var(--txt)',whiteSpace:'pre-wrap',padding:'4px 7px',background:'var(--bg)',borderRadius:2,marginTop:3}}>{seq.body}</pre>}
+                    {seq.match&&Object.keys(seq.match||{}).length>0&&<div style={{fontSize:8,color:'var(--cyan)',marginTop:2}}>match: {JSON.stringify(seq.match)}</div>}
+                    {seq.set&&Object.keys(seq.set||{}).length>0&&<div style={{fontSize:8,color:'var(--green)',marginTop:2}}>set: {JSON.stringify(seq.set)}</div>}
+                  </div>))}
+              </ColCard>))}
+        </div>
+      )}
+
+      {/* LOGS (running config) */}
+      {sub==='logs'&&(
+        <div className="pb">
+          <div style={{fontSize:7.5,color:'var(--mut)',textTransform:'uppercase',letterSpacing:'.2em',marginBottom:7}}>Running Configuration</div>
+          <pre style={{fontSize:8,color:'var(--amber)',lineHeight:1.6,whiteSpace:'pre-wrap',wordBreak:'break-all'}}>
+            {twin?.running_config||'No running-config collected.'}
+          </pre>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── SIMULATE PANEL (with Genie Diff) ─────────────────────────────────────
+function GenieDiffView({genieDiff}){
+  if(!genieDiff) return(
+    <div style={{color:'var(--mut)',fontSize:8.5,padding:12,background:'rgba(45,140,240,.04)',border:'1px solid rgba(45,140,240,.15)',borderRadius:3}}>
+      Genie Diff not available — requires pyATS + Genie installed.<br/>
+      Install: <span style={{color:'var(--cyan)'}}>pip install pyats genie</span>
+    </div>
+  );
+
+  const riskColor = {'CRITICAL':'var(--rose)','WARNING':'var(--amber)','SAFE':'var(--green)','NO_CHANGE':'var(--mut)'}[genieDiff.risk?.verdict||'SAFE']||'var(--mut)';
+
+  return(
+    <div>
+      {/* Per-feature diff results */}
+      {Object.entries(genieDiff).map(([feat,d])=>{
+        if(typeof d !== 'object' || d.error) return(
+          <div key={feat} style={{marginBottom:8,padding:'7px 10px',background:'var(--pan)',border:'1px solid var(--bdr)',borderRadius:3}}>
+            <div style={{fontSize:8,fontWeight:700,color:'var(--mut)',textTransform:'uppercase'}}>{feat}</div>
+            <div style={{fontSize:7.5,color:'var(--rose)',marginTop:3}}>{d?.error||'No data'}</div>
+          </div>
+        );
+        const risk = d.risk||{};
+        const rc = {'CRITICAL':'var(--rose)','WARNING':'var(--amber)','SAFE':'var(--green)','NO_CHANGE':'var(--mut)'}[risk.verdict]||'var(--mut)';
+        const counts = d.counts||{};
+        return(
+          <div key={feat} style={{marginBottom:8,border:'1px solid var(--bdr)',borderRadius:3,overflow:'hidden'}}>
+            {/* Feature header */}
+            <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'6px 10px',background:'var(--surf)',borderBottom:'1px solid var(--bdr)'}}>
+              <div style={{display:'flex',alignItems:'center',gap:7}}>
+                <span style={{fontSize:9,fontWeight:700,color:'var(--txt)',textTransform:'uppercase'}}>{feat}</span>
+                <span style={{fontSize:7,fontWeight:700,padding:'1px 6px',borderRadius:2,background:`${rc}18`,color:rc,border:`1px solid ${rc}44`,textTransform:'uppercase'}}>{risk.verdict||'?'}</span>
+                <span style={{fontSize:7,color:'var(--mut)'}}>score: {risk.score||0}</span>
+                <span style={{fontSize:7,color:'var(--mut)'}}>engine: {d._engine||'genie_diff'}</span>
+              </div>
+              <div style={{display:'flex',gap:7,fontSize:8}}>
+                <span style={{color:'var(--green)'}}>+{counts.added||0} added</span>
+                <span style={{color:'var(--rose)'}}>-{counts.removed||0} removed</span>
+                <span style={{color:'var(--amber)'}}>~{counts.modified||0} modified</span>
+              </div>
+            </div>
+            {/* Risk findings */}
+            {(risk.findings||[]).length>0&&(
+              <div style={{padding:'5px 10px',background:`${rc}08`,borderBottom:'1px solid var(--bdr)'}}>
+                {(risk.findings||[]).map((f,i)=><div key={i} style={{fontSize:8,color:rc,marginBottom:1}}>▶ {f}</div>)}
+              </div>
+            )}
+            {/* Diff lines */}
+            <div style={{padding:'6px 10px'}}>
+              {(d.removed||[]).slice(0,12).map((l,i)=><div key={i} className="diff-removed" style={{fontSize:8,marginBottom:1}}>- {l}</div>)}
+              {(d.added||[]).slice(0,12).map((l,i)=><div key={i} className="diff-added" style={{fontSize:8,marginBottom:1}}>+ {l}</div>)}
+              {(d.modified||[]).slice(0,8).map((l,i)=><div key={i} style={{fontSize:8,color:'var(--amber)',marginBottom:1,fontFamily:'IBM Plex Mono,monospace'}}>~ {l}</div>)}
+              {(d.raw_diff)&&(
+                <details style={{marginTop:5}}>
+                  <summary style={{fontSize:7.5,color:'var(--mut)',cursor:'pointer'}}>Raw Genie Diff output</summary>
+                  <pre style={{fontSize:7,color:'var(--mut)',whiteSpace:'pre-wrap',marginTop:4}}>{d.raw_diff}</pre>
+                </details>)}
+            </div>
+          </div>);
+      })}
+    </div>
+  );
+}
+
+function SimPanel({simResult}){
+  const [view,setView]=useState('genie-diff');
+  if(!simResult) return(
+    <div className="empty"><div className="empty-hex">⬡</div>
+      <div className="empty-t">No Simulation</div>
+      <div className="empty-s">Click "Simulate" to run config simulation with Genie Diff</div>
+    </div>
+  );
+  if(simResult.error) return(
+    <div className="empty"><div className="empty-hex">⚠</div>
+      <div className="empty-t">Simulation Error</div><div className="empty-s">{simResult.error}</div>
+    </div>
+  );
+
+  // genie_diff is now a dict of {feature: {added,removed,modified,risk,engine}}
+  const gd = simResult.genie_diff || {};
+  const gdFeatures = Object.keys(gd);
+  const totalRisk = gdFeatures.reduce((acc,feat)=>{
+    const v = gd[feat]?.risk?.verdict || gd[feat]?.verdict || '';
+    if(v==='CRITICAL') return Math.max(acc,3);
+    if(v==='WARNING') return Math.max(acc,2);
+    if(v==='SAFE') return Math.max(acc,1);
+    return acc;
+  },0);
+  const overallRisk = ['NO_CHANGE','SAFE','WARNING','CRITICAL'][totalRisk]||'UNKNOWN';
+  const riskColor = {'CRITICAL':'var(--rose)','WARNING':'var(--amber)','SAFE':'var(--green)','NO_CHANGE':'var(--mut)','UNKNOWN':'var(--mut)'}[overallRisk];
+  const totalAdded   = gdFeatures.reduce((a,f)=>a+(gd[f]?.added?.length||0),0);
+  const totalRemoved = gdFeatures.reduce((a,f)=>a+(gd[f]?.removed?.length||0),0);
+  const totalMod     = gdFeatures.reduce((a,f)=>a+(gd[f]?.modified?.length||0),0);
+
+  return(
+    <div style={{display:'flex',flexDirection:'column',flex:1,overflow:'hidden'}}>
+      {/* Stats bar */}
+      <div style={{flexShrink:0,display:'flex',gap:5,padding:'7px 11px',borderBottom:'1px solid var(--bdr)',background:'var(--surf)'}}>
+        {/* Genie Diff risk */}
+        <div style={{flex:1.5,background:'var(--pan)',border:`1px solid ${riskColor}44`,borderRadius:3,padding:'5px 8px'}}>
+          <div style={{fontFamily:'Barlow Condensed,sans-serif',fontSize:18,fontWeight:700,color:riskColor,lineHeight:1}}>{overallRisk}</div>
+          <div style={{fontSize:7,color:'var(--mut)',textTransform:'uppercase',letterSpacing:'.08em',marginTop:2}}>Genie Diff Risk</div>
+        </div>
+        {[['Removed',totalRemoved||(simResult.removed_lines||[]).length,'var(--rose)'],
+          ['Added',totalAdded||(simResult.added_lines||[]).length,'var(--green)'],
+          ['Modified',totalMod||(simResult.modified_sections||[]).length,'var(--amber)'],
+          ['Cascades',(simResult.parent_child_impacts||[]).length,'var(--violet)'],
+        ].map(([l,v,c])=>(
+          <div key={l} style={{flex:1,background:'var(--pan)',border:'1px solid var(--bdr)',borderRadius:3,padding:'5px 8px'}}>
+            <div style={{fontFamily:'Barlow Condensed,sans-serif',fontSize:18,fontWeight:700,color:c,lineHeight:1}}>{v}</div>
+            <div style={{fontSize:7,color:'var(--mut)',textTransform:'uppercase',letterSpacing:'.08em',marginTop:2}}>{l}</div>
+          </div>))}
+        {/* Engine indicator */}
+        <div style={{flex:1.5,background:'var(--pan)',border:'1px solid var(--bdr)',borderRadius:3,padding:'5px 8px'}}>
+          <div style={{fontSize:9,fontWeight:700,color:simResult.genie_diff_available?'var(--cyan)':'var(--mut)',lineHeight:1.2}}>
+            {simResult.genie_diff_available?`Genie+${simResult.provider||'LLM'}`:'LLM Only'}
+          </div>
+          <div style={{fontSize:7,color:'var(--mut)',textTransform:'uppercase',letterSpacing:'.08em',marginTop:2}}>Engine</div>
+          {gdFeatures.length>0&&<div style={{fontSize:6.5,color:'var(--cyan)',marginTop:2}}>{gdFeatures.join('·')}</div>}
+        </div>
+      </div>
+
+      {/* View tabs */}
+      <div style={{flexShrink:0,display:'flex',gap:2,padding:'6px 11px',borderBottom:'1px solid var(--bdr)'}}>
+        {['genie-diff','diff','simulated','parent-child','raw'].map(v=>(
+          <button key={v} onClick={()=>setView(v)}
+            style={{padding:'3px 10px',
+              background:view===v?(v==='genie-diff'?'rgba(0,212,170,.15)':'rgba(45,140,240,.15)'):'transparent',
+              border:`1px solid ${view===v?(v==='genie-diff'?'var(--cyan)':'var(--blue)'):'var(--bdr)'}`,
+              borderRadius:3,cursor:'pointer',fontSize:8,
+              color:view===v?(v==='genie-diff'?'var(--cyan)':'var(--blue)'):'var(--mut)',
+              fontFamily:'IBM Plex Mono,monospace',textTransform:'uppercase',letterSpacing:'.1em'}}>
+            {v==='genie-diff'?'⬡ Genie Diff':v}
+          </button>))}
+      </div>
+
+      <div className="pb">
+        {view==='genie-diff'&&<GenieDiffView genieDiff={simResult.genie_diff}/>}
+
+        {view==='diff'&&(
+          <div style={{fontFamily:'IBM Plex Mono,monospace'}}>
+            <div style={{fontSize:7,color:'var(--mut)',textTransform:'uppercase',letterSpacing:'.2em',marginBottom:7}}>LLM Config Diff</div>
+            {(simResult.removed_lines||[]).length>0&&(
+              <div style={{marginBottom:8}}>
+                <div style={{fontSize:7.5,color:'var(--rose)',marginBottom:4}}>━ REMOVED ({(simResult.removed_lines||[]).length})</div>
+                {(simResult.removed_lines||[]).map((l,i)=><div key={i} className="diff-removed">- {l}</div>)}
+              </div>)}
+            {(simResult.added_lines||[]).length>0&&(
+              <div style={{marginBottom:8}}>
+                <div style={{fontSize:7.5,color:'var(--green)',marginBottom:4}}>+ ADDED ({(simResult.added_lines||[]).length})</div>
+                {(simResult.added_lines||[]).map((l,i)=><div key={i} className="diff-added">+ {l}</div>)}
+              </div>)}
+            {(simResult.modified_sections||[]).length>0&&(
+              <div>
+                <div style={{fontSize:7.5,color:'var(--amber)',marginBottom:4}}>~ SECTIONS MODIFIED</div>
+                {(simResult.modified_sections||[]).map((s,i)=>(
+                  <div key={i} style={{padding:'3px 8px',background:'rgba(255,176,32,.06)',border:'1px solid rgba(255,176,32,.2)',borderRadius:2,marginBottom:3,fontSize:8.5,color:'var(--amber)'}}>{s}</div>))}
+              </div>)}
+          </div>)}
+
+        {view==='simulated'&&(
+          <div>
+            <div style={{fontSize:7,color:'var(--mut)',textTransform:'uppercase',letterSpacing:'.2em',marginBottom:7}}>Simulated Configuration</div>
+            <pre style={{fontSize:8,color:'#7ee787',background:'#060a0f',border:'1px solid var(--bdr2)',borderRadius:3,padding:10,whiteSpace:'pre-wrap',wordBreak:'break-all',lineHeight:1.7}}>
+              {simResult.simulated_config||'No simulated config generated'}
+            </pre>
+          </div>)}
+
+        {view==='parent-child'&&(
+          <div>
+            <div style={{fontSize:7,color:'var(--mut)',textTransform:'uppercase',letterSpacing:'.2em',marginBottom:7}}>Parent-Child Cascade Impacts</div>
+            {(simResult.parent_child_impacts||[]).length>0
+              ?(simResult.parent_child_impacts||[]).map((imp,i)=>(
+                <div key={i} style={{padding:'7px 9px',background:'var(--pan)',border:'1px solid var(--bdr)',borderLeft:'3px solid var(--amber)',borderRadius:'0 3px 3px 0',marginBottom:5,fontSize:8.5,lineHeight:1.5}}>{imp}</div>))
+              :<div style={{color:'var(--mut)',fontSize:8.5,textAlign:'center',padding:'20px'}}>No parent-child cascade impacts identified</div>}
+          </div>)}
+
+        {view==='raw'&&(
+          <pre style={{fontSize:7.5,color:'var(--mut)',whiteSpace:'pre-wrap',wordBreak:'break-all',lineHeight:1.6}}>
+            {simResult.raw_response||'No raw response'}
+          </pre>)}
+      </div>
+    </div>
+  );
+}
+
+// ─── ARCHITECTURE FLOW DIAGRAM ───────────────────────────────────────────
+// Shows the live execution flow: Intent → Claude → Agents → MCP → Netmiko → Genie → JSON
+function ArchFlowDiagram({active, result, agentData}){
+  // Full 8-phase architecture layers
+  const layers = [
+    {id:'intent',  label:'Change Intent',  icon:'✎', color:'var(--txt)',    desc:'CLI commands to apply to device'},
+    {id:'llm0',    label:'LLM Analysis',   icon:'⬡', color:'var(--violet)', desc:'Phase 0: Claude/Ollama identifies domains, risk, concerns'},
+    {id:'sup',     label:'Supervisor',     icon:'◈', color:'var(--cyan)',   desc:'Phase 1: domain agent selection based on LLM output'},
+    {id:'mcp',     label:'MCP Gateway',    icon:'⚡', color:'var(--blue)',   desc:'Phase 2-3: build_testbed → Netmiko SSH + pyATS Telnet + Genie Learn'},
+    {id:'agents',  label:'Domain Agents',  icon:'⊕', color:'var(--green)',  desc:'Phase 4-5: OSPF·BGP·Interface·ACL·Routing·CDP·VLAN → JSON only'},
+    {id:'genie',   label:'PyATS+Genie',    icon:'◈', color:'var(--amber)',  desc:'Phase 3-6: Learn·Parse·Diff — structured JSON, never raw CLI'},
+    {id:'synth',   label:'LLM Synthesis',  icon:'⬡', color:'var(--violet)', desc:'Phase 7: Claude/Ollama receives structured JSON → CCIE verdict'},
+    {id:'gui',     label:'Risk Verdict',   icon:'◆', color:'var(--rose)',   desc:'Phase 8: findings, blast radius, rollback commands'},
+  ];
+
+  const agentCount = result?.selected_agents?.length || agentData?.selected_agents?.length || 0;
+  const channels   = result?.mcp_channels || agentData?.mcp_testbed?.channels || [];
+  const risks      = (result?.agent_risk_indicators || agentData?.all_risk_indicators || []).length;
+  const domains    = result?.domains_identified || [];
+  const riskEst    = result?.risk_estimate || '';
+
+  return(
+    <div style={{padding:'10px 12px',background:'var(--surf)',border:'1px solid var(--bdr)',borderRadius:4,margin:'0 0 10px 0'}}>
+      <div style={{fontSize:7,color:'var(--mut)',textTransform:'uppercase',letterSpacing:'.2em',marginBottom:8,display:'flex',justifyContent:'space-between'}}>
+        <span>Enterprise Architecture Flow</span>
+        <span style={{color:'var(--cyan)'}}>
+          {riskEst&&<span style={{color:{'CRITICAL':'var(--rose)','HIGH':'var(--rose)','MEDIUM':'var(--amber)','LOW':'var(--green)'}[riskEst]||'var(--cyan)',fontWeight:700,marginRight:6}}>{riskEst}</span>}
+          {domains.length>0&&`${domains.join('·')} · `}
+          {agentCount>0&&`${agentCount} agents · `}
+          {channels.length>0&&`${channels.join('+')} · `}
+          {risks>0&&`${risks} risk indicators`}
+        </span>
+      </div>
+      <div style={{display:'flex',alignItems:'stretch',gap:0}}>
+        {layers.map((l,i)=>(
+          <React.Fragment key={l.id}>
+            <div style={{flex:1,display:'flex',flexDirection:'column',alignItems:'center',gap:3}}>
+              <div style={{width:28,height:28,borderRadius:4,display:'flex',alignItems:'center',justifyContent:'center',
+                background:`${l.color}14`,border:`1px solid ${l.color}44`,fontSize:11,color:l.color,fontWeight:700}}>
+                {l.icon}
+              </div>
+              <div style={{fontSize:7,fontWeight:700,color:l.color,textAlign:'center',letterSpacing:'.04em',textTransform:'uppercase',lineHeight:1.2}}>
+                {l.label}
+              </div>
+              <div style={{fontSize:6.5,color:'var(--mut)',textAlign:'center',lineHeight:1.3,maxWidth:80}}>
+                {l.desc}
+              </div>
+            </div>
+            {i<layers.length-1&&(
+              <div style={{display:'flex',alignItems:'flex-start',paddingTop:10,color:'var(--dim)',fontSize:12,flexShrink:0}}>→</div>)}
+          </React.Fragment>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ─── DOMAIN EXPERT AGENTS PANEL (MCP-integrated) ─────────────────────────
+// Architecture: Agent → MCP Tool → Netmiko SSH → Genie Parse → JSON → Agent
+function AgentPanel({agentData, pipelineResult}){
+  const [sel,setSel]=React.useState(null);
+  const [showTrace,setShowTrace]=React.useState(false);
+
+  // Accept data from /agent_analysis OR from /mcp_pipeline result
+  const agents     = agentData?.agents     || pipelineResult?.agent_results     || null;
+  const risks      = agentData?.all_risk_indicators || pipelineResult?.agent_risk_indicators || [];
+  const toolTrace  = pipelineResult?.mcp_tool_trace || agentData?.mcp_tool_trace || [];
+  const testbed    = agentData?.mcp_testbed  || pipelineResult?.mcp_testbed     || null;
+  const selectedAg = agentData?.selected_agents || pipelineResult?.selected_agents || [];
+
+  const C = {ospf:'#00d4aa',bgp:'#00e676',interface:'#448aff',acl:'#ffab40',routing:'#ce93d8',cdp:'#ff5060',vlan:'#90a4ae'};
+  const ICO = {ospf:'⬡',bgp:'⇄',interface:'⌗',acl:'⛨',routing:'◈',cdp:'⊕',vlan:'⊞'};
+
+  if(!agents) return(
+    <div className="empty">
+      <div style={{fontSize:36,marginBottom:12}}>⊕</div>
+      <div className="empty-t">No Agent Analysis</div>
+      <div className="empty-s">Click <strong>⊕ AGENTS</strong> to run domain expert agents via MCP<br/>
+        or run <strong>⬡ MCP PIPELINE</strong> for the full Supervisor+Agent flow</div>
+      <div style={{marginTop:16,padding:'10px 14px',background:'rgba(0,212,170,.04)',border:'1px solid rgba(0,212,170,.12)',borderRadius:4,maxWidth:380,textAlign:'left'}}>
+        <div style={{fontSize:7,color:'var(--cyan)',textTransform:'uppercase',letterSpacing:'.15em',marginBottom:6}}>MCP Flow (per spec)</div>
+        {['Agent generates commands','Agent → MCP tool call','MCP executes via Netmiko SSH','Genie parses → structured JSON','Agent reasons on JSON only','Supervisor synthesizes verdict'].map((s,i)=>
+          <div key={i} style={{display:'flex',gap:6,alignItems:'flex-start',marginBottom:3,fontSize:8,color:'var(--txt)'}}>
+            <span style={{color:'var(--cyan)',fontWeight:700,minWidth:14}}>{i+1}.</span>{s}
+          </div>)}
+      </div>
+    </div>
+  );
+
+  const riskList = Array.isArray(risks)
+    ? risks.map(r=>typeof r==='object'?r:({agent:'',indicator:r}))
+    : [];
+  const criticals = riskList.filter(r=>r.indicator?.includes('CRITICAL'));
+  const warnings  = riskList.filter(r=>r.indicator?.includes('WARNING'));
+
+  return(
+    <div style={{display:'flex',flexDirection:'column',flex:1,overflow:'hidden'}}>
+
+      {/* ── MCP Testbed status bar ── */}
+      {testbed&&(
+        <div style={{flexShrink:0,display:'flex',gap:6,padding:'5px 11px',background:'rgba(0,212,170,.04)',borderBottom:'1px solid rgba(0,212,170,.12)',alignItems:'center'}}>
+          <span style={{fontSize:7,color:'var(--cyan)',textTransform:'uppercase',letterSpacing:'.12em',fontWeight:700}}>MCP Testbed</span>
+          {(testbed.channels||[]).map(ch=>(
+            <span key={ch} style={{fontSize:7,background:'rgba(0,212,170,.12)',color:'var(--cyan)',padding:'1px 6px',borderRadius:2,border:'1px solid rgba(0,212,170,.25)'}}>
+              {ch==='ssh'?'⚡ Netmiko SSH':ch==='telnet'?'◎ pyATS Telnet':ch==='cached'?'📦 Cached':'?'} {ch}
+            </span>))}
+          <span style={{fontSize:7.5,color:'var(--mut)',marginLeft:4}}>
+            hostname: <span style={{color:'var(--txt)'}}>{testbed.hostname||'?'}</span>
+          </span>
+          {selectedAg.length>0&&(
+            <span style={{fontSize:7,color:'var(--mut)',marginLeft:'auto'}}>
+              agents dispatched: <span style={{color:'var(--cyan)'}}>{selectedAg.join(' · ')}</span>
+            </span>)}
+        </div>)}
+
+      {/* ── Risk summary banner ── */}
+      {riskList.length>0&&(
+        <div style={{flexShrink:0,padding:'6px 11px',background:criticals.length?'rgba(255,69,96,.06)':'rgba(255,171,64,.05)',borderBottom:`1px solid ${criticals.length?'rgba(255,69,96,.2)':'rgba(255,171,64,.15)'}`}}>
+          <div style={{display:'flex',gap:8,alignItems:'center',marginBottom:4}}>
+            <span style={{fontSize:7,color:criticals.length?'var(--rose)':'var(--amber)',textTransform:'uppercase',letterSpacing:'.15em',fontWeight:700}}>
+              ⚠ {criticals.length} CRITICAL · {warnings.length} WARNING
+            </span>
+          </div>
+          {riskList.slice(0,5).map((r,i)=>(
+            <div key={i} style={{fontSize:7.5,color:r.indicator?.includes('CRITICAL')?'var(--rose)':'var(--amber)',lineHeight:1.5,marginLeft:8}}>
+              {r.agent&&<span style={{color:C[r.agent]||'var(--mut)',fontWeight:700,fontSize:7,marginRight:4}}>[{r.agent.toUpperCase()}]</span>}
+              {r.indicator}
+            </div>))}
+          {riskList.length>5&&<div style={{fontSize:7,color:'var(--mut)',marginLeft:8,marginTop:2}}>+{riskList.length-5} more risk indicators...</div>}
+        </div>)}
+
+      {/* ── Agent cards ── */}
+      <div style={{flexShrink:0,display:'flex',flexWrap:'wrap',gap:5,padding:'8px 11px',borderBottom:'1px solid var(--bdr)',background:'var(--surf)'}}>
+        {Object.entries(agents).map(([name,agt])=>{
+          const rCnt=(agt.risk_indicators||[]).length;
+          const c=C[name]||'var(--mut)';
+          const ic=ICO[name]||'◆';
+          const src=agt.mcp_source||'?';
+          const srcC=src==='genie_live'?'var(--green)':src==='cached'?'var(--amber)':'var(--mut)';
+          return(
+            <div key={name} onClick={()=>setSel(sel===name?null:name)}
+              style={{flex:'1 1 130px',minWidth:130,padding:'7px 9px',background:'var(--pan)',
+                border:`1px solid ${sel===name?c:'var(--bdr)'}`,borderRadius:3,cursor:'pointer',
+                transition:'border-color .15s',boxShadow:sel===name?`0 0 10px ${c}33`:'none'}}>
+              <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:2}}>
+                <span style={{fontSize:10,color:c,fontWeight:700,fontFamily:"'Barlow Condensed',sans-serif",letterSpacing:'.05em'}}>{ic} {name.toUpperCase()}</span>
+                {rCnt>0&&<span style={{fontSize:7,background:'rgba(255,69,96,.15)',color:'var(--rose)',padding:'1px 5px',borderRadius:2}}>{rCnt}</span>}
+              </div>
+              {/* MCP source indicator */}
+              <div style={{fontSize:6.5,color:srcC,textTransform:'uppercase',letterSpacing:'.1em',marginBottom:3}}>
+                {src==='genie_live'?'⚡ live genie':src==='cached'?'📦 cached':'○ none'} · learn("{agt.learn_object||name}")
+              </div>
+              {/* Analysis summary */}
+              {agt.analysis&&(
+                <div style={{fontSize:8,color:'var(--txt)'}}>
+                  {agt.analysis.neighbor_count!==undefined&&<span>{agt.analysis.neighbor_count} nbrs </span>}
+                  {agt.analysis.full_neighbors>0&&<span style={{color:'var(--cyan)'}}>{agt.analysis.full_neighbors} FULL </span>}
+                  {agt.analysis.established>0&&<span style={{color:'var(--green)'}}>{agt.analysis.established} est'd </span>}
+                  {agt.analysis.total!==undefined&&<span>{agt.analysis.up||0}/{agt.analysis.total} up </span>}
+                  {agt.analysis.total_routes!==undefined&&<span>{agt.analysis.total_routes} routes </span>}
+                  {agt.analysis.acl_count!==undefined&&<span>{agt.analysis.acl_count} ACLs </span>}
+                  {agt.analysis.vlan_count!==undefined&&<span>{agt.analysis.vlan_count} VLANs </span>}
+                </div>)}
+            </div>);
+        })}
+      </div>
+
+      {/* ── MCP Tool Trace toggle ── */}
+      {toolTrace.length>0&&(
+        <div style={{flexShrink:0,borderBottom:'1px solid var(--bdr)',padding:'0'}}>
+          <div onClick={()=>setShowTrace(!showTrace)}
+            style={{padding:'5px 11px',display:'flex',alignItems:'center',gap:6,cursor:'pointer',background:'var(--surf)'}}>
+            <span style={{fontSize:7,color:'var(--cyan)',textTransform:'uppercase',letterSpacing:'.12em',fontWeight:700}}>
+              {showTrace?'▾':'▸'} MCP Tool Execution Trace ({toolTrace.length} agents)
+            </span>
+            <span style={{fontSize:7,color:'var(--mut)'}}>Agent → MCP → Netmiko SSH → Genie → JSON</span>
+          </div>
+          {showTrace&&(
+            <div style={{padding:'6px 11px',background:'var(--pan)',maxHeight:160,overflowY:'auto'}}>
+              {toolTrace.map((t,i)=>{
+                const ac=C[t.agent]||'var(--mut)';
+                return(
+                  <div key={i} style={{marginBottom:6,padding:'5px 8px',background:'var(--surf)',border:'1px solid var(--bdr)',borderLeft:`3px solid ${ac}`,borderRadius:'0 3px 3px 0'}}>
+                    <div style={{fontSize:8,color:ac,fontWeight:700,marginBottom:3}}>{ICO[t.agent]||'◆'} {t.agent?.toUpperCase()} Agent</div>
+                    {(t.tools_called||[]).map((tc,j)=>(
+                      <div key={j} style={{display:'flex',gap:6,alignItems:'center',marginBottom:2,fontSize:7.5}}>
+                        <span style={{color:'var(--cyan)',fontFamily:"'IBM Plex Mono',monospace"}}>→ MCP.{tc.tool}({JSON.stringify(tc.input).slice(0,50)})</span>
+                        <span style={{color:'var(--mut)'}}>←</span>
+                        <span style={{color:tc.source==='genie_live'?'var(--green)':tc.source==='cached'?'var(--amber)':'var(--mut)'}}>
+                          {tc.source==='genie_live'?'Genie Live JSON':tc.source==='cached'?'Cached JSON':'No data'}
+                        </span>
+                      </div>))}
+                    {t.risks?.length>0&&t.risks.map((r,j)=>(
+                      <div key={j} style={{fontSize:7,color:r.includes('CRITICAL')?'var(--rose)':'var(--amber)',marginTop:2,marginLeft:8}}>⚠ {r}</div>))}
+                  </div>);
+              })}
+            </div>)}
+        </div>)}
+
+      {/* ── Agent detail pane ── */}
+      <div className="pb">
+        {!sel&&(
+          <div style={{textAlign:'center',padding:'18px 0',color:'var(--mut)',fontSize:8.5}}>
+            Click an agent card to view MCP calls, analysis, and risk indicators
+          </div>)}
+        {sel&&agents[sel]&&(()=>{
+          const agt=agents[sel];
+          const c=C[sel]||'var(--mut)';
+          const src=agt.mcp_source||'none';
+          return(
+            <div>
+              {/* Agent header */}
+              <div style={{marginBottom:8,padding:'8px 10px',background:'var(--pan)',border:`1px solid ${c}33`,borderLeft:`3px solid ${c}`,borderRadius:'0 3px 3px 0'}}>
+                <div style={{fontFamily:"'Barlow Condensed',sans-serif",fontSize:18,fontWeight:700,color:c,letterSpacing:'.06em'}}>
+                  {ICO[sel]} {sel.toUpperCase()} DOMAIN AGENT
+                </div>
+                <div style={{display:'flex',gap:12,marginTop:3,flexWrap:'wrap'}}>
+                  <span style={{fontSize:7.5,color:'var(--mut)'}}>
+                    learn_object: <span style={{color:'var(--cyan)',fontFamily:"'IBM Plex Mono',monospace"}}>{agt.learn_object}</span>
+                  </span>
+                  <span style={{fontSize:7.5,color:'var(--mut)'}}>
+                    data source: <span style={{color:src==='genie_live'?'var(--green)':src==='cached'?'var(--amber)':'var(--rose)'}}>{src}</span>
+                  </span>
+                  <span style={{fontSize:7.5,color:'var(--mut)'}}>
+                    relevant: <span style={{color:agt.relevant_to_intent?'var(--green)':'var(--mut)'}}>{String(agt.relevant_to_intent??true)}</span>
+                  </span>
+                </div>
+              </div>
+
+              {/* MCP tools called */}
+              <div style={{marginBottom:8}}>
+                <div style={{fontSize:7,color:'var(--mut)',textTransform:'uppercase',letterSpacing:'.15em',marginBottom:5}}>MCP Tools Called (Agent Never Touches Device Directly)</div>
+                <div style={{display:'flex',flexDirection:'column',gap:3}}>
+                  {(agt.mcp_tools_called||['learn_feature_state','run_show_and_parse']).map((tool,i)=>(
+                    <div key={i} style={{display:'flex',alignItems:'center',gap:8,padding:'5px 9px',
+                      background:'rgba(0,212,170,.04)',border:'1px solid rgba(0,212,170,.15)',borderRadius:3}}>
+                      <span style={{fontSize:8,color:'var(--cyan)',fontFamily:"'IBM Plex Mono',monospace",fontWeight:700}}>MCP.{tool}()</span>
+                      <span style={{fontSize:7,color:'var(--mut)'}}>→ Netmiko SSH → Genie → JSON</span>
+                      <span style={{fontSize:7,marginLeft:'auto',color:src==='genie_live'?'var(--green)':'var(--amber)'}}>
+                        {src==='genie_live'?'⚡ live':'📦 cached'}
+                      </span>
+                    </div>))}
+                </div>
+              </div>
+
+              {/* Verification commands */}
+              <div style={{marginBottom:8}}>
+                <div style={{fontSize:7,color:'var(--mut)',textTransform:'uppercase',letterSpacing:'.15em',marginBottom:4}}>Verification Commands (sent to MCP → Netmiko)</div>
+                {(agt.critical_show_commands||[]).map((cmd,i)=>(
+                  <div key={i} style={{display:'flex',gap:6,alignItems:'center',marginBottom:2}}>
+                    <span style={{fontSize:7,color:'var(--cyan)',minWidth:40}}>→ MCP</span>
+                    <span style={{flex:1,fontSize:8,color:'var(--cyan)',fontFamily:"'IBM Plex Mono',monospace",
+                      background:'rgba(0,212,170,.05)',border:'1px solid rgba(0,212,170,.12)',borderRadius:2,padding:'2px 8px'}}>{cmd}</span>
+                    <span style={{fontSize:7,color:'var(--green)'}}>← JSON</span>
+                  </div>))}
+              </div>
+
+              {/* Risk indicators */}
+              {(agt.risk_indicators||[]).length>0?(
+                <div style={{marginBottom:8,padding:'7px 9px',background:'rgba(255,69,96,.04)',
+                  border:'1px solid rgba(255,69,96,.2)',borderLeft:'3px solid var(--rose)',borderRadius:'0 3px 3px 0'}}>
+                  <div style={{fontSize:7,color:'var(--rose)',textTransform:'uppercase',letterSpacing:'.15em',marginBottom:4}}>Risk Indicators</div>
+                  {agt.risk_indicators.map((r,i)=>(
+                    <div key={i} style={{fontSize:8.5,color:r.includes('CRITICAL')?'var(--rose)':'var(--amber)',lineHeight:1.7}}>{r}</div>))}
+                </div>
+              ):(
+                <div style={{marginBottom:8,padding:'5px 9px',background:'rgba(0,230,118,.04)',
+                  border:'1px solid rgba(0,230,118,.15)',borderRadius:3,fontSize:8,color:'var(--green)'}}>
+                  ✓ No risk indicators — agent assessment: SAFE
+                </div>)}
+
+              {/* Analysis JSON */}
+              <div>
+                <div style={{fontSize:7,color:'var(--mut)',textTransform:'uppercase',letterSpacing:'.15em',marginBottom:4}}>Structured Analysis (from Genie via MCP)</div>
+                <pre style={{fontSize:7.5,color:'var(--txt)',background:'var(--pan)',border:'1px solid var(--bdr)',
+                  borderRadius:3,padding:'8px 10px',whiteSpace:'pre-wrap',wordBreak:'break-all',lineHeight:1.6,
+                  maxHeight:240,overflow:'auto',margin:0}}>{JSON.stringify(agt.analysis,null,2)}</pre>
+              </div>
+            </div>);
+        })()}
+      </div>
+    </div>
+  );
+}
+
+// ─── FULL MCP PIPELINE PANEL (Supervisor + Agent + MCP flow) ─────────────
+function McpPanel({mcpResult}){
+  const [tab,setTab]=React.useState('verdict'); // verdict | trace | agents | rollback
+
+  if(!mcpResult) return(
+    <div className="empty">
+      <div style={{fontSize:36,marginBottom:12}}>⬡</div>
+      <div className="empty-t">No MCP Pipeline Result</div>
+      <div className="empty-s">Click <strong>⬡ MCP PIPELINE</strong> to run the full Supervisor+Agent analysis</div>
+      {/* Architecture diagram */}
+      <div style={{marginTop:16,display:'flex',flexDirection:'column',gap:0,alignItems:'center',width:'100%',maxWidth:280}}>
+        {[
+          {label:'User Intent',c:'var(--txt)'},
+          {label:'Supervisor Agent (Claude/Ollama)',c:'var(--violet)'},
+          {label:'Domain Agent Selection',c:'var(--cyan)'},
+          {label:'MCP Tool Call',c:'var(--cyan)'},
+          {label:'Netmiko SSH Execution',c:'var(--green)'},
+          {label:'Genie Parsing → JSON',c:'var(--green)'},
+          {label:'Agent Risk Analysis',c:'var(--amber)'},
+          {label:'Supervisor Verdict',c:'var(--rose)'},
+        ].map((row,i)=>(
+          <div key={i} style={{display:'flex',flexDirection:'column',alignItems:'center',width:'100%'}}>
+            <div style={{padding:'4px 14px',border:`1px solid ${row.c}33`,borderRadius:2,
+              background:`${row.c}08`,fontSize:8,color:row.c,textAlign:'center',width:'80%'}}>{row.label}</div>
+            {i<7&&<div style={{width:1,height:12,background:'var(--bdr)'}}/>}
+          </div>))}
+      </div>
+    </div>
+  );
+
+  const vc   = {'SAFE':'go','WARNING':'caution','CRITICAL':'nogo','NO-GO':'nogo','UNKNOWN':'caution'}[mcpResult.verdict||'UNKNOWN']||'caution';
+  const risk = Math.round((mcpResult.risk_score||0)*100);
+  const vc_c = vc==='go'?'var(--green)':vc==='nogo'?'var(--rose)':'var(--amber)';
+  const agents = mcpResult.agent_results||{};
+  const agentNames = Object.keys(agents);
+  const allRisks = mcpResult.agent_risk_indicators||[];
+  const trace = mcpResult.mcp_tool_trace||[];
+  const C = {ospf:'#00d4aa',bgp:'#00e676',interface:'#448aff',acl:'#ffab40',routing:'#ce93d8',cdp:'#ff5060',vlan:'#90a4ae'};
+  const ICO = {ospf:'⬡',bgp:'⇄',interface:'⌗',acl:'⛨',routing:'◈',cdp:'⊕',vlan:'⊞'};
+
+  return(
+    <div style={{display:'flex',flexDirection:'column',flex:1,overflow:'hidden'}}>
+      {/* ── Header: Supervisor verdict ── */}
+      <div style={{flexShrink:0,padding:'8px 11px',borderBottom:'1px solid var(--bdr)',background:'var(--surf)'}}>
+        <div style={{display:'flex',gap:10,alignItems:'center',marginBottom:6}}>
+          <div className={`dc ${vc}`} style={{flex:1,marginBottom:0,padding:'8px 12px'}}>
+            <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:4}}>
+              <div style={{fontFamily:"'Barlow Condensed',sans-serif",fontSize:20,fontWeight:700,color:vc_c,letterSpacing:'.06em'}}>
+                {mcpResult.verdict||'UNKNOWN'}
+              </div>
+              <div style={{textAlign:'right'}}>
+                <div style={{fontSize:7,color:'var(--mut)',textTransform:'uppercase',letterSpacing:'.1em'}}>Risk Score</div>
+                <div style={{fontSize:16,fontWeight:700,color:vc_c,fontFamily:"'Barlow Condensed',sans-serif"}}>{risk}%</div>
+              </div>
+            </div>
+            <div className="rtk" style={{marginBottom:4}}>
+              <div className="rf" style={{width:`${risk}%`,background:vc_c}}/>
+            </div>
+            {mcpResult.summary&&<div style={{fontSize:8,color:'var(--txt)',lineHeight:1.5}}>{mcpResult.summary}</div>}
+          </div>
+          {/* Pipeline meta */}
+          <div style={{minWidth:150}}>
+            <div style={{fontSize:7,color:'var(--mut)',textTransform:'uppercase',letterSpacing:'.1em',marginBottom:4}}>
+              Pipeline · {mcpResult.provider||'?'}
+              {mcpResult.provider==='claude'&&<span style={{color:'var(--cyan)',marginLeft:4}}>⬡</span>}
+              {mcpResult.provider==='local'&&<span style={{color:'var(--green)',marginLeft:4}}>⬤</span>}
+            </div>
+            {/* LLM Intent Analysis banner (Phase 0) */}
+            {mcpResult.intent_analysis&&(
+              <div style={{marginBottom:5,padding:'4px 7px',background:'rgba(0,212,170,.05)',
+                border:'1px solid rgba(0,212,170,.15)',borderRadius:2}}>
+                <div style={{fontSize:6.5,color:'var(--cyan)',textTransform:'uppercase',letterSpacing:'.1em',marginBottom:2}}>
+                  Phase 0: LLM Intent Analysis
+                </div>
+                <div style={{fontSize:7,color:'var(--txt)',lineHeight:1.5}}>
+                  {mcpResult.risk_estimate&&
+                    <span style={{color:{'CRITICAL':'var(--rose)','HIGH':'var(--rose)','MEDIUM':'var(--amber)','LOW':'var(--green)'}[mcpResult.risk_estimate]||'var(--txt)',fontWeight:700,marginRight:4}}>
+                      {mcpResult.risk_estimate}
+                    </span>}
+                  {(mcpResult.domains_identified||[]).join(' · ')||'No domains identified'}
+                </div>
+                {mcpResult.agent_reasoning&&(
+                  <div style={{fontSize:6.5,color:'var(--mut)',marginTop:2,lineHeight:1.4}}>
+                    {mcpResult.agent_reasoning.slice(0,100)}...
+                  </div>)}
+              </div>)}
+            {[
+              ['Agents', (mcpResult.selected_agents||[]).length],
+              ['Risks', allRisks.length],
+              ['Channels', (mcpResult.mcp_channels||[]).join(', ')||'?'],
+              ['Host', mcpResult.mcp_testbed?.hostname||'?'],
+              ['Genie Diff', Object.keys(mcpResult.genie_diff||{}).join('·')||'none'],
+            ].map(([k,v])=>(
+              <div key={k} style={{display:'flex',justifyContent:'space-between',marginBottom:2}}>
+                <span style={{fontSize:7,color:'var(--mut)'}}>{k}</span>
+                <span style={{fontSize:7.5,color:'var(--txt)',fontWeight:600}}>{v}</span>
+              </div>))}
+          </div>
+        </div>
+        {/* Sub-tabs */}
+        <div style={{display:'flex',gap:3}}>
+          {['verdict','trace','agents','rollback'].map(t=>(
+            <button key={t} onClick={()=>setTab(t)}
+              style={{padding:'3px 9px',fontSize:7.5,fontWeight:700,letterSpacing:'.08em',textTransform:'uppercase',
+                background:tab===t?'rgba(0,212,170,.12)':'transparent',
+                color:tab===t?'var(--cyan)':'var(--mut)',
+                border:tab===t?'1px solid rgba(0,212,170,.3)':'1px solid transparent',
+                borderRadius:2,cursor:'pointer'}}>
+              {t==='verdict'?'📋 Verdict':t==='trace'?'⚡ MCP Trace':t==='agents'?`⊕ Agents (${agentNames.length})`:'↩ Rollback'}
+            </button>))}
+        </div>
+      </div>
+
+      <div className="pb">
+
+        {/* ── Verdict tab ── */}
+        {tab==='verdict'&&(
+          <div>
+          <ArchFlowDiagram result={mcpResult}/>
+          <div>
+            {/* Findings */}
+            {(mcpResult.findings||[]).length>0&&(
+              <div style={{marginBottom:8}}>
+                <div style={{fontSize:7,color:'var(--mut)',textTransform:'uppercase',letterSpacing:'.15em',marginBottom:5}}>Findings</div>
+                {(mcpResult.findings||[]).map((f,i)=>(
+                  <div key={i} style={{padding:'5px 9px',background:'var(--pan)',border:'1px solid var(--bdr)',
+                    borderLeft:`3px solid ${f.includes('CRITICAL')?'var(--rose)':f.includes('WARNING')?'var(--amber)':'var(--cyan)'}`,
+                    borderRadius:'0 3px 3px 0',marginBottom:4,fontSize:8.5,lineHeight:1.5}}>{f}</div>))}
+              </div>)}
+            {/* Recommendation */}
+            {mcpResult.recommendation&&(
+              <div style={{marginBottom:8,padding:'9px 12px',background:'var(--pan)',border:'1px solid var(--bdr)',borderRadius:3}}>
+                <div style={{fontSize:7,color:'var(--mut)',textTransform:'uppercase',letterSpacing:'.15em',marginBottom:5}}>Recommendation</div>
+                <div style={{fontSize:8.5,color:'var(--txt)',lineHeight:1.7}}>{mcpResult.recommendation}</div>
+              </div>)}
+            {/* Blast radius + CCIE analysis */}
+            {mcpResult.blast_radius&&(
+              <div style={{marginBottom:8,padding:'7px 9px',background:'rgba(255,69,96,.04)',
+                border:'1px solid rgba(255,69,96,.15)',borderRadius:3,fontSize:8,color:'var(--rose)',lineHeight:1.6}}>
+                <span style={{fontSize:7,textTransform:'uppercase',letterSpacing:'.12em',marginRight:6}}>Blast Radius:</span>
+                {mcpResult.blast_radius}
+              </div>)}
+            {mcpResult.ccie_analysis&&(
+              <div style={{marginBottom:8,padding:'8px 10px',background:'rgba(0,212,170,.03)',
+                border:'1px solid rgba(0,212,170,.12)',borderRadius:3}}>
+                <div style={{fontSize:7,color:'var(--cyan)',textTransform:'uppercase',letterSpacing:'.15em',marginBottom:4}}>
+                  CCIE Expert Analysis
+                </div>
+                <div style={{fontSize:8.5,color:'var(--txt)',lineHeight:1.7}}>{mcpResult.ccie_analysis}</div>
+              </div>)}
+            {/* Concerns from LLM Phase 0 */}
+            {(mcpResult.concerns||[]).length>0&&(
+              <div style={{marginBottom:8}}>
+                <div style={{fontSize:7,color:'var(--mut)',textTransform:'uppercase',letterSpacing:'.15em',marginBottom:4}}>
+                  Pre-Change Concerns (LLM Intent Analysis)
+                </div>
+                {(mcpResult.concerns||[]).map((c,i)=>(
+                  <div key={i} style={{padding:'3px 9px',background:'var(--pan)',border:'1px solid var(--bdr)',
+                    borderLeft:'3px solid var(--violet)',borderRadius:'0 3px 3px 0',marginBottom:3,fontSize:8}}>
+                    {c}
+                  </div>))}
+              </div>)}
+            {/* Affected */}
+            <div style={{display:'flex',gap:6,flexWrap:'wrap'}}>
+              {['affected_neighbors','affected_prefixes','affected_agents'].map(k=>{
+                const arr=mcpResult[k]||[];
+                if(!arr.length) return null;
+                const labels={'affected_neighbors':'Affected Neighbors','affected_prefixes':'Affected Prefixes','affected_agents':'Affected Agents'};
+                return(
+                  <div key={k} style={{flex:'1 1 120px',padding:'6px 9px',background:'var(--pan)',border:'1px solid var(--bdr)',borderRadius:3}}>
+                    <div style={{fontSize:7,color:'var(--mut)',textTransform:'uppercase',letterSpacing:'.1em',marginBottom:4}}>{labels[k]}</div>
+                    {arr.map((v,i)=><div key={i} style={{fontSize:8,color:'var(--amber)',marginBottom:2}}>⚠ {v}</div>)}
+                  </div>);
+              })}
+            </div>
+          </div>
+          </div>)}
+
+        {/* ── MCP Trace tab ── */}
+        {tab==='trace'&&(
+          <div>
+            <div style={{marginBottom:8,padding:'7px 10px',background:'rgba(0,212,170,.04)',border:'1px solid rgba(0,212,170,.15)',borderRadius:3}}>
+              <div style={{fontSize:7.5,color:'var(--cyan)',lineHeight:1.6}}>
+                MCP Execution Flow: Agent → MCP Tool → Netmiko SSH → Genie Parser → Structured JSON → Agent<br/>
+                <span style={{color:'var(--mut)'}}>Agents NEVER see raw CLI output. Claude NEVER sees raw device output.</span>
+              </div>
+            </div>
+            {/* Architecture ladder */}
+            {trace.map((t,i)=>{
+              const ac=C[t.agent]||'var(--mut)';
+              const ic=ICO[t.agent]||'◆';
+              return(
+                <div key={i} style={{marginBottom:8,padding:'8px 10px',background:'var(--pan)',border:'1px solid var(--bdr)',borderLeft:`3px solid ${ac}`,borderRadius:'0 3px 3px 0'}}>
+                  <div style={{fontSize:9,color:ac,fontWeight:700,fontFamily:"'Barlow Condensed',sans-serif",letterSpacing:'.05em',marginBottom:5}}>
+                    {ic} {t.agent?.toUpperCase()} AGENT
+                    {t.risk_count>0&&<span style={{marginLeft:8,fontSize:7,background:'rgba(255,69,96,.15)',color:'var(--rose)',padding:'1px 6px',borderRadius:2}}>{t.risk_count} risks</span>}
+                  </div>
+                  {(t.tools_called||[]).map((tc,j)=>(
+                    <div key={j} style={{display:'flex',alignItems:'center',gap:5,marginBottom:5,flexWrap:'wrap'}}>
+                      <span style={{fontSize:7,color:'var(--mut)',minWidth:50}}>Agent calls</span>
+                      <span style={{fontSize:8,color:'var(--cyan)',fontFamily:"'IBM Plex Mono',monospace",
+                        background:'rgba(0,212,170,.06)',border:'1px solid rgba(0,212,170,.15)',borderRadius:2,padding:'2px 7px'}}>
+                        MCP.{tc.tool}({JSON.stringify(tc.input).slice(0,40)})
+                      </span>
+                      <span style={{fontSize:7,color:'var(--mut)'}}>→ Netmiko SSH</span>
+                      <span style={{fontSize:7,color:'var(--mut)'}}>→ Genie Parser</span>
+                      <span style={{fontSize:7,color:tc.source==='genie_live'?'var(--green)':'var(--amber)'}}>→ {tc.source==='genie_live'?'⚡ Live JSON':'📦 Cached JSON'}</span>
+                    </div>))}
+                  {t.risks?.length>0&&(
+                    <div style={{marginTop:3,paddingTop:3,borderTop:'1px solid var(--bdr)'}}>
+                      {t.risks.map((r,j)=>(
+                        <div key={j} style={{fontSize:7.5,color:r.includes('CRITICAL')?'var(--rose)':'var(--amber)',marginTop:2}}>⚠ {r}</div>))}
+                    </div>)}
+                </div>);
+            })}
+            {trace.length===0&&<div style={{textAlign:'center',padding:'20px',color:'var(--mut)',fontSize:8}}>No MCP tool trace available. Run the MCP pipeline with a live device connection.</div>}
+          </div>)}
+
+        {/* ── Agents summary tab ── */}
+        {tab==='agents'&&(
+          <div>
+            <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:6,marginBottom:8}}>
+              {agentNames.map(name=>{
+                const agt=agents[name];
+                const c=C[name]||'var(--mut)';
+                const ic=ICO[name]||'◆';
+                const rCnt=agt.risk_count||0;
+                const src=agt.mcp_source||'?';
+                return(
+                  <div key={name} style={{padding:'7px 9px',background:'var(--pan)',border:`1px solid ${rCnt?'rgba(255,69,96,.25)':'var(--bdr)'}`,borderRadius:3}}>
+                    <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:3}}>
+                      <span style={{fontSize:9,color:c,fontWeight:700}}>{ic} {name.toUpperCase()}</span>
+                      <span style={{fontSize:7,color:src==='genie_live'?'var(--green)':'var(--amber)'}}>
+                        {src==='genie_live'?'⚡ live':'📦 cached'}
+                      </span>
+                    </div>
+                    <div style={{fontSize:7,color:'var(--mut)',fontFamily:"'IBM Plex Mono',monospace",marginBottom:3}}>
+                      learn("{agt.learn_object||name}")
+                    </div>
+                    {rCnt>0?(
+                      <div style={{fontSize:7.5,color:'var(--rose)'}}>{rCnt} risk indicator{rCnt!==1?'s':''}</div>
+                    ):(
+                      <div style={{fontSize:7.5,color:'var(--green)'}}>✓ safe</div>)}
+                    {(agt.analysis?.neighbor_count!==undefined||agt.analysis?.total_routes!==undefined)&&(
+                      <div style={{fontSize:7.5,color:'var(--txt)',marginTop:2}}>
+                        {agt.analysis.neighbor_count!==undefined&&`${agt.analysis.neighbor_count} neighbors`}
+                        {agt.analysis.total_routes!==undefined&&` ${agt.analysis.total_routes} routes`}
+                        {agt.analysis.acl_count!==undefined&&` ${agt.analysis.acl_count} ACLs`}
+                      </div>)}
+                  </div>);
+              })}
+            </div>
+            {/* All risks */}
+            {allRisks.length>0&&(
+              <div>
+                <div style={{fontSize:7,color:'var(--mut)',textTransform:'uppercase',letterSpacing:'.15em',marginBottom:5}}>All Risk Indicators (from domain agents)</div>
+                {allRisks.map((r,i)=>{
+                  const ind=typeof r==='object'?r:r;
+                  const txt=typeof r==='object'?r.indicator:r;
+                  const ag=typeof r==='object'?r.agent:'';
+                  return(
+                    <div key={i} style={{padding:'4px 9px',borderLeft:`3px solid ${txt?.includes('CRITICAL')?'var(--rose)':'var(--amber)'}`,
+                      marginBottom:3,fontSize:8,color:'var(--txt)'}}>
+                      {ag&&<span style={{color:C[ag]||'var(--mut)',fontWeight:700,fontSize:7,marginRight:5}}>[{ag.toUpperCase()}]</span>}
+                      {txt}
+                    </div>);
+                })}
+              </div>)}
+          </div>)}
+
+        {/* ── Rollback tab ── */}
+        {tab==='rollback'&&(
+          <div>
+            <div style={{marginBottom:8,padding:'7px 9px',background:'rgba(255,171,64,.04)',border:'1px solid rgba(255,171,64,.15)',borderRadius:3,fontSize:8,color:'var(--amber)',lineHeight:1.6}}>
+              Rollback commands derived by Supervisor Agent from agent risk analysis
+            </div>
+            {(mcpResult.rollback_commands||[]).length>0?(
+              <div>
+                {mcpResult.rollback_commands.map((cmd,i)=>(
+                  <div key={i} style={{fontFamily:"'IBM Plex Mono',monospace",fontSize:9,color:'var(--cyan)',
+                    background:'rgba(0,212,170,.04)',border:'1px solid rgba(0,212,170,.15)',borderRadius:2,
+                    padding:'5px 10px',marginBottom:4}}>
+                    {cmd}
+                  </div>))}
+              </div>
+            ):(
+              <div style={{textAlign:'center',padding:'20px',color:'var(--mut)',fontSize:8}}>
+                No rollback commands generated. Run MCP pipeline with a specific change intent.
+              </div>)}
+          </div>)}
+
+      </div>
+    </div>
+  );
+}
+
+// ─── ANOMALY PANEL ────────────────────────────────────────────────────────
+function AnomalyPanel({anomalyResult}){
+  const [filter,setFilter]=useState('ALL');
+  if(!anomalyResult) return(
+    <div className="empty"><div className="empty-hex">⬡</div>
+      <div className="empty-t">No Anomaly Data</div>
+      <div className="empty-s">Use "Scan Anomalies" (on-demand) or "With Intent" button to run analysis</div>
+    </div>
+  );
+
+  const anoms = (anomalyResult.anomalies||[]);
+  const filtered = filter==='ALL'?anoms:anoms.filter(a=>a.severity===filter);
+  const sc = anomalyResult.severity_counts||{};
+
+  return(
+    <div style={{display:'flex',flexDirection:'column',flex:1,overflow:'hidden'}}>
+      {/* Summary bar */}
+      <div style={{flexShrink:0,display:'flex',gap:5,padding:'7px 11px',borderBottom:'1px solid var(--bdr)',background:'var(--surf)'}}>
+        {[['CRITICAL',sc.CRITICAL||0,'var(--rose)'],['HIGH',sc.HIGH||0,'var(--amber)'],['MEDIUM',sc.MEDIUM||0,'var(--blue)'],['LOW',sc.LOW||0,'var(--mut)']].map(([sev,cnt,c])=>(
+          <div key={sev} style={{flex:1,background:'var(--pan)',border:`1px solid ${c}33`,borderRadius:3,padding:'5px 8px',cursor:'pointer',opacity:filter===sev||filter==='ALL'?1:.5}}
+            onClick={()=>setFilter(filter===sev?'ALL':sev)}>
+            <div style={{fontFamily:'Barlow Condensed,sans-serif',fontSize:18,fontWeight:700,color:c,lineHeight:1}}>{cnt}</div>
+            <div style={{fontSize:7,color:'var(--mut)',textTransform:'uppercase',letterSpacing:'.08em',marginTop:2}}>{sev}</div>
+          </div>))}
+        <div style={{flex:2,background:'var(--pan)',border:'1px solid var(--bdr)',borderRadius:3,padding:'5px 8px',display:'flex',alignItems:'center'}}>
+          <div style={{fontSize:8,color:'var(--txt)',lineHeight:1.4}}>{anomalyResult.summary||''}</div>
+        </div>
+      </div>
+      {anomalyResult.intent_mode&&(
+        <div style={{flexShrink:0,padding:'4px 11px',background:'rgba(0,212,170,.05)',borderBottom:'1px solid rgba(0,212,170,.15)',fontSize:7.5,color:'var(--cyan)'}}>
+          ✦ Intent-correlated scan — anomalies include impact relative to the submitted intent
+        </div>
+      )}
+
+      <div className="pb">
+        {filtered.length===0&&<div style={{textAlign:'center',padding:'20px',color:'var(--mut)',fontSize:8.5}}>No {filter==='ALL'?'':filter} anomalies detected</div>}
+        {filtered.map((a,i)=>(
+          <div key={i} className={`anom-card anom-${a.severity}`} style={{marginBottom:6}}>
+            <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',marginBottom:5}}>
+              <div>
+                <span style={{fontSize:9.5,fontWeight:700,color:'#fff'}}>{a.title}</span>
+                <div style={{display:'flex',gap:5,marginTop:3}}>
+                  <span style={{fontSize:7,fontWeight:700,padding:'1px 5px',borderRadius:2,textTransform:'uppercase',
+                    background:`${SEV_COLOR[a.severity]||'var(--mut)'}22`,color:SEV_COLOR[a.severity]||'var(--mut)',
+                    border:`1px solid ${SEV_COLOR[a.severity]||'var(--mut)'}44`}}>{a.severity}</span>
+                  <span style={{fontSize:7,fontWeight:700,padding:'1px 5px',borderRadius:2,textTransform:'uppercase',
+                    background:'rgba(45,140,240,.1)',color:'var(--blue)',border:'1px solid rgba(45,140,240,.2)'}}>{a.category}</span>
+                </div>
+              </div>
+            </div>
+            {a.description&&<div style={{fontSize:8.5,color:'var(--txt)',marginBottom:5,lineHeight:1.5}}>{a.description}</div>}
+            {a.evidence&&(
+              <div style={{marginBottom:5}}>
+                <div style={{fontSize:7,color:'var(--mut)',textTransform:'uppercase',letterSpacing:'.12em',marginBottom:2}}>Evidence</div>
+                <pre style={{fontSize:8,color:'var(--amber)',background:'rgba(255,176,32,.05)',border:'1px solid rgba(255,176,32,.15)',borderRadius:2,padding:'4px 7px',whiteSpace:'pre-wrap',wordBreak:'break-all'}}>{a.evidence}</pre>
+              </div>)}
+            {a.fix&&(
+              <div>
+                <div style={{fontSize:7,color:'var(--mut)',textTransform:'uppercase',letterSpacing:'.12em',marginBottom:2}}>Fix</div>
+                <pre style={{fontSize:8,color:'var(--green)',background:'rgba(0,230,118,.05)',border:'1px solid rgba(0,230,118,.15)',borderRadius:2,padding:'4px 7px',whiteSpace:'pre-wrap',wordBreak:'break-all'}}>{a.fix}</pre>
+              </div>)}
+          </div>))}
+      </div>
+    </div>
+  );
+}
+
+// ─── CHAT PANEL ───────────────────────────────────────────────────────────
+function ChatPanel({analysisContext,port}){
+  const [msgs,setMsgs]=useState([{role:'ai',text:'Hi! I have access to the full pipeline analysis results. Ask me anything about the configuration, change intent, impact, topology, decisions, or network state. (Powered by Claude)'}]);
+  const [input,setInput]=useState('');
+  const [thinking,setThinking]=useState(false);
+  const endRef=useRef(null);
+  useEffect(()=>{endRef.current?.scrollIntoView({behavior:'smooth'})},[msgs]);
+
+  const send=async()=>{
+    if(!input.trim()||thinking) return;
+    const q=input.trim();
+    setInput('');
+    setMsgs(prev=>[...prev,{role:'user',text:q}]);
+    setThinking(true);
+    try{
+      const resp=await fetch(`${API}/chat`,{
+        method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({question:q,context:analysisContext,port}),
+      });
+      const data=await resp.json();
+      setMsgs(prev=>[...prev,{role:'ai',text:data.answer||'No answer returned.'}]);
+    }catch(e){
+      setMsgs(prev=>[...prev,{role:'ai',text:`Error: ${e.message}. Is the backend running?`}]);
+    }finally{setThinking(false)}
+  };
+
+  return(
+    <div className="chat-wrap">
+      <div className="chat-msgs">
+        {msgs.map((m,i)=>(
+          <div key={i} className={`chat-bubble ${m.role==='user'?'chat-user':'chat-ai'}`}>
+            {m.role==='ai'&&<div style={{fontSize:7,color:'var(--mut)',marginBottom:3,textTransform:'uppercase',letterSpacing:'.1em'}}>Claude · NetBuilder AI</div>}
+            <div style={{whiteSpace:'pre-wrap',lineHeight:1.6}}>{m.text}</div>
+          </div>))}
+        {thinking&&<div className="chat-bubble chat-ai chat-thinking">Thinking...</div>}
+        <div ref={endRef}/>
+      </div>
+      <div className="chat-input-row">
+        <input className="chat-input" value={input} onChange={e=>setInput(e.target.value)}
+          onKeyDown={e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();send()}}}
+          placeholder="Ask about config, intent, impact, decision... (Claude, Enter to send)"/>
+        <button className="btn btn-run" style={{height:30,padding:'0 12px',fontSize:10}} onClick={send} disabled={thinking}>
+          {thinking?'...':'Send'}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ─── MAIN APP ─────────────────────────────────────────────────────────────
+const App=()=>{
+  const [intent,setIntent]=useState('no router ospf 9\nno network 9.9.0.0 0.0.0.255 area 0');
+  const [port,setPort]=useState(5017);
+  const [provider,setProvider]=useState('local');  // 'claude' | 'local'
+  const [providerSwitching,setProviderSwitching]=useState(false);
+
+  const switchProvider=async(newProv)=>{
+    setProviderSwitching(true);
+    try{
+      const r=await fetch(`${API}/provider`,{
+        method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({provider:newProv}),
+      });
+      const d=await r.json();
+      setProvider(newProv);
+      setLlmStatus(d);
+      addLogs([`[LLM] Provider switched to: ${newProv==='claude'?'Claude (cloud)':'Ollama (local)'}`]);
+    }catch(e){
+      addLogs([`[LLM] Provider switch failed: ${e.message}`]);
+    }finally{setProviderSwitching(false)}
+  };
+
+  const resetClaude=async()=>{
+    const r=await fetch(`${API}/provider`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({provider:'reset_claude'})});
+    const d=await r.json();
+    setLlmStatus(prev=>({...prev,claude_balance_ok:true}));
+    addLogs(['[LLM] Claude balance reset — retrying Claude on next call']);
+  };
+
+  // LLM status
+  const [llmStatus,setLlmStatus]=useState(null);
+
+  // running states
+  const [running,setRunning]=useState(false);
+  const [discovering,setDiscovering]=useState(false);
+  const [simRunning,setSimRunning]=useState(false);
+  const [anomRunning,setAnonRunning]=useState(false);
+
+  const [stageStatus,setStageStatus]=useState(Array(5).fill('idle'));
+  const [result,setResult]=useState(null);
+  const [simResult,setSimResult]=useState(null);
+  const [anomalyResult,setAnomalyResult]=useState(null);
+  const [mcpResult,setMcpResult]=useState(null);
+  const [mcpRunning,setMcpRunning]=useState(false);
+  const [mcpPhase,setMcpPhase]=useState(-1);  // 0-7 current phase
+  const [agentResult,setAgentResult]=useState(null);
+  const [agentRunning,setAgentRunning]=useState(false);
+  const [savedInvMeta,setSavedInvMeta]=useState(null);
+
+  const [logs,setLogs]=useState(['> NetBuilder Pro v5 ready.',"> Use 'Discover' to fetch device inventory, then 'Run Pipeline' for analysis."]);
+  const [activeTab,setActiveTab]=useState('decision');
+  const logEndRef=useRef(null);
+  useEffect(()=>{logEndRef.current?.scrollIntoView({behavior:'smooth'})},[logs]);
+  const addLogs = newLogs => setLogs(prev=>[...prev,...newLogs]);
+
+  // Poll LLM status on mount and after each pipeline run
+  const pollLlmStatus=useCallback(()=>{
+    fetch(`${API}/llm_status`).then(r=>r.json()).then(setLlmStatus).catch(()=>{});
+  },[]);
+
+  useEffect(()=>{
+    pollLlmStatus();
+    // Poll every 30s to catch credit restoration
+    const t=setInterval(pollLlmStatus,30000);
+    return ()=>clearInterval(t);
+  },[pollLlmStatus]);
+
+  // Check for saved inventory on mount
+  useEffect(()=>{
+    fetch(`${API}/saved_inventory`).then(r=>r.json())
+      .then(d=>{if(d[port])setSavedInvMeta(d[port])})
+      .catch(()=>{});
+  },[port]);
+
+  // DISCOVER
+  const discover=async()=>{
+    setDiscovering(true);
+    setLogs(['[DISCOVER] Connecting to device...']);
+    try{
+      const resp=await fetch(`${API}/discover`,{
+        method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({port}),
+      });
+      const data=await resp.json();
+      if(data.error){
+        addLogs([...(data.logs||[]),`[FATAL] ${data.error}`]);
+      } else {
+        addLogs(data.logs||[]);
+        // Store inventory in result so UI can show it
+        setResult(prev=>({
+          ...(prev||{}),
+          inventory: data.inventory,
+          physical_topology: data.physical_topology,
+          topology: data.topology,
+          critical_nodes: data.critical_nodes,
+          digital_twin: prev?.digital_twin || {},
+        }));
+        setSavedInvMeta({timestamp:data.timestamp, interface_count:(data.inventory?.interfaces||[]).length});
+        setActiveTab('inventory');
+      }
+    }catch(e){
+      addLogs([`[FATAL] Cannot reach backend: ${e.message}`]);
+    }finally{setDiscovering(false)}
+  };
+
+  // PIPELINE
+  const run=async()=>{
+    setRunning(true);
+    setSimResult(null);
+    setStageStatus(Array(5).fill('idle'));
+    setLogs([`[INIT] Pipeline starting | provider=${provider} | port=${port}`]);
+    let curStage=-1;
+    const poll=setInterval(()=>{
+      setLogs(prev=>{
+        for(let i=prev.length-1;i>=0;i--){
+          const m=prev[i].match(/STAGE (\d)/);
+          if(m){
+            const s=parseInt(m[1])-1;
+            if(s!==curStage){
+              curStage=s;
+              setStageStatus(ss=>{const ns=[...ss];for(let j=0;j<s;j++)ns[j]='done';ns[s]='active';return ns});
+            }
+            break;
+          }
+        }
+        return prev;
+      });
+    },400);
+    const _runController=new AbortController();
+    const _runTimeout=setTimeout(()=>_runController.abort(),600000); // 10min timeout
+    try{
+      const resp=await fetch(`${API}/analyze`,{
+        method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({port,intent,provider,use_saved_inventory:!!savedInvMeta}),
+        signal:_runController.signal,
+      });
+      clearTimeout(_runTimeout);
+      const data=await resp.json();
+      clearInterval(poll);
+      if(data.error){
+        addLogs([...(data.logs||[]),`[FATAL] ${data.error}`]);
+        setStageStatus(ss=>{const ns=[...ss];const idx=ns.findIndex(x=>x==='active');if(idx>=0)ns[idx]='error';return ns});
+      } else {
+        setResult(data);
+        if(data.logs) setLogs(data.logs);
+        setStageStatus(Array(5).fill('done'));
+        setActiveTab('decision');
+        if(data.used_saved_inventory){
+          addLogs(['[INIT] Used saved inventory — Stages 1-2 were skipped.']);
+        }
+      }
+    }catch(e){
+      clearInterval(poll);
+      clearTimeout(_runTimeout);
+      if(e.name==='AbortError'){
+        addLogs(['[FATAL] Pipeline timed out (10 min). Backend may still be running. Check /health']);
+      } else {
+        addLogs([`[FATAL] ${e.message}`,'[FATAL] Ensure backend is running: python app6.py']);
+      }
+      setStageStatus(ss=>{const ns=[...ss];ns[0]='error';return ns});
+    }finally{setRunning(false);pollLlmStatus()}
+  };
+
+  // SIMULATE
+  const simulate=async()=>{
+    setSimRunning(true);
+    addLogs(['[SIM] Config simulation starting...']);
+    try{
+      const resp=await fetch(`${API}/simulate`,{
+        method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({port,intent,provider,genie_diff:true,features:['interface','routing','ospf','bgp','acl']}),
+      });
+      const data=await resp.json();
+      addLogs(data.logs||[]);
+      setSimResult(data);
+      setActiveTab('simulate');
+    }catch(e){
+      addLogs([`[SIM] Error: ${e.message}`]);
+      setSimResult({error:e.message});
+    }finally{setSimRunning(false)}
+  };
+
+  // ANOMALY (standalone on-demand)
+  const scanAnomalies=async(intentMode=false)=>{
+    setAnonRunning(true);
+    addLogs([`[ANOMALY] Scan starting (intent_mode=${intentMode})...`]);
+    try{
+      const resp=await fetch(`${API}/anomalies`,{
+        method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({port,intent:intentMode?intent:'',provider,intent_mode:intentMode}),
+      });
+      const data=await resp.json();
+      addLogs(data.logs||[]);
+      setAnomalyResult(data);
+      setActiveTab('anomaly');
+    }catch(e){
+      addLogs([`[ANOMALY] Error: ${e.message}`]);
+    }finally{setAnonRunning(false)}
+  };
+
+  // MCP PIPELINE — Claude tool-calling loop
+  const runMcpPipeline=async()=>{
+    setMcpRunning(true);
+    setMcpPhase(0);
+    setMcpResult(null);
+    addLogs([
+      '[PIPELINE] ═══ Enterprise Network Change Orchestration ═══',
+      '[PHASE:0] LLM Intent Analysis — identifying affected domains...',
+    ]);
+    const _ctrl=new AbortController();
+    const _timeout=setTimeout(()=>_ctrl.abort(),600000); // 10min timeout
+    // Phase tracker (polls logs for phase markers)
+    const phaseMarkers=['[PHASE:0]','[PHASE:1]','[PHASE:2]','[PHASE:3]','[PHASE:4]','[PHASE:5]','[PHASE:6]','[PHASE:7]'];
+    const _phaseTimer=setInterval(()=>{
+      setLogs(prev=>{
+        for(let i=prev.length-1;i>=0;i--){
+          for(let p=7;p>=0;p--){
+            if(String(prev[i]||'').includes(phaseMarkers[p])){
+              setMcpPhase(p);
+              return prev;
+            }
+          }
+        }
+        return prev;
+      });
+    },600);
+    try{
+      const resp=await fetch(`${API}/mcp_pipeline`,{
+        method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({port,intent,provider}),
+        signal:_ctrl.signal,
+      });
+      clearTimeout(_timeout);
+      if(!resp.ok){
+        const err=await resp.json().catch(()=>({error:`HTTP ${resp.status}`}));
+        addLogs([`[PIPELINE:ERROR] ${err.error||resp.status}`, ...(err.logs||[])]);
+        setMcpPhase(-1);
+        return;
+      }
+      const data=await resp.json();
+      addLogs(data.logs||[]);
+      if(data.verdict){
+        addLogs([
+          `[PIPELINE] ✓ Complete`,
+          `[PIPELINE] Verdict: ${data.verdict} | Risk: ${Math.round((data.risk_score||0)*100)}%`,
+          `[PIPELINE] Provider: ${data.provider||'?'} | Domains: ${(data.domains_identified||[]).join(', ')||'from agents'}`,
+          `[PIPELINE] Agents: ${(data.selected_agents||[]).join(', ')} | Risks: ${(data.agent_risk_indicators||[]).length}`,
+        ]);
+      }
+      setMcpPhase(8);
+      setMcpResult(data);
+      setActiveTab('mcp');
+      pollLlmStatus();
+    }catch(e){
+      clearTimeout(_timeout);
+      if(e.name==='AbortError'){
+        addLogs(['[PIPELINE] Timed out (10min). Device may be unreachable.','[PIPELINE] Check cached inventory: run Discover first.']);
+      } else {
+        addLogs([`[PIPELINE:ERROR] ${e.message}`]);
+      }
+      setMcpPhase(-1);
+    }finally{
+      clearInterval(_phaseTimer);
+      setMcpRunning(false);
+    }
+  };
+
+  // DOMAIN EXPERT AGENTS
+  const runAgentAnalysis=async()=>{
+    setAgentRunning(true);
+    addLogs(['[AGENTS] Running domain expert agents...']);
+    const _agCtrl=new AbortController();
+    const _agTimeout=setTimeout(()=>_agCtrl.abort(),180000); // 3min timeout
+    try{
+      const resp=await fetch(`${API}/agent_analysis`,{
+        method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({port,intent,provider}),
+        signal:_agCtrl.signal,
+      });
+      clearTimeout(_agTimeout);
+      const data=await resp.json();
+      setAgentResult(data);
+      setActiveTab('agents');
+      addLogs(data.logs||[]);
+      const riskCount=(data.all_risk_indicators||[]).length;
+      addLogs([`[AGENTS] Complete — ${riskCount} risk indicator(s) found`]);
+    }catch(e){
+      clearTimeout(_agTimeout);
+      if(e.name==='AbortError'){
+        addLogs(['[AGENTS] Timed out (3min). Backend may still be processing.']);
+      } else {
+        addLogs([`[AGENTS] Error: ${e.message}`]);
+      }
+    }finally{setAgentRunning(false)}
+  };
+
+  // TAKE SNAPSHOT (pre or post)
+  const takeSnapshot=async(label='pre')=>{
+    addLogs([`[SNAPSHOT] Taking ${label} state snapshot...`]);
+    try{
+      const resp=await fetch(`${API}/take_snapshot`,{
+        method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({port,label,features:['interface','routing','ospf','bgp','acl','cdp']}),
+      });
+      const data=await resp.json();
+      addLogs(data.logs||[]);
+      addLogs([`[SNAPSHOT] ${label.toUpperCase()} snapshot taken. Features: ${(data.features||[]).join(', ')}`]);
+    }catch(e){
+      addLogs([`[SNAPSHOT] Error: ${e.message}`]);
+    }
+  };
+
+  const parsed = result?parseDecision(result.decision):null;
+  const vc = parsed?vcls(parsed.verdict):'';
+
+  // Analysis context for chat
+  const chatContext = {
+    decision: result?.decision||'',
+    classification: result?.classification||{},
+    blast_radius: result?.blast_radius||{},
+    validation: result?.validation||{},
+    topology: result?.topology||{},
+  };
+
+  return(
+    <div style={{display:'flex',flexDirection:'column',height:'100vh',overflow:'hidden'}}>
+
+      {/* HEADER */}
+      <div className="hdr">
+        <div className="logo">
+          <div className="logo-hex"></div>
+          <div>
+            <div className="logo-t">NetBuilder <span>Pro v6</span></div>
+            <div className="logo-s">MCP · Genie Diff · Netmiko · AI SRE Platform</div>
+          </div>
+        </div>
+        <div className="hctrl">
+          {/* LLM Provider Selector */}
+          <div style={{display:'flex',alignItems:'center',gap:6,borderRight:'1px solid var(--bdr)',paddingRight:14,marginRight:4}}>
+            <div>
+              <div className="cl" style={{marginBottom:3}}>LLM Provider</div>
+              <div style={{display:'flex',gap:3}}>
+                <button onClick={()=>switchProvider('claude')} disabled={providerSwitching}
+                  style={{padding:'2px 8px',fontSize:8,fontWeight:700,letterSpacing:'.08em',textTransform:'uppercase',
+                    background:provider==='claude'?'rgba(0,212,170,.15)':'transparent',
+                    color:provider==='claude'?'var(--cyan)':'var(--mut)',
+                    border:`1px solid ${provider==='claude'?'var(--cyan)':'var(--bdr)'}`,
+                    borderRadius:2,cursor:'pointer',
+                    opacity:(llmStatus&&!llmStatus.anthropic_key_set)?0.4:1}}
+                  title={llmStatus&&!llmStatus.anthropic_key_set?'ANTHROPIC_API_KEY not set':'Claude (Haiku)'}>
+                  ⬡ Claude
+                  {llmStatus&&(!llmStatus.claude_balance_ok)&&<span style={{color:'var(--rose)',marginLeft:4}}>!</span>}
+                </button>
+                <button onClick={()=>switchProvider('local')} disabled={providerSwitching}
+                  style={{padding:'2px 8px',fontSize:8,fontWeight:700,letterSpacing:'.08em',textTransform:'uppercase',
+                    background:provider==='local'?'rgba(0,230,118,.12)':'transparent',
+                    color:provider==='local'?'var(--green)':'var(--mut)',
+                    border:`1px solid ${provider==='local'?'var(--green)':'var(--bdr)'}`,
+                    borderRadius:2,cursor:'pointer'}}>
+                  ⬤ Ollama
+                </button>
+              </div>
+            </div>
+            {llmStatus&&!llmStatus.claude_balance_ok&&provider==='claude'&&(
+              <button onClick={resetClaude}
+                style={{padding:'2px 7px',fontSize:7,color:'var(--amber)',border:'1px solid var(--amber)',
+                  background:'rgba(255,176,32,.1)',borderRadius:2,cursor:'pointer'}}>
+                Reset
+              </button>)}
+          </div>
+          {/* Auto-fallback indicator */}
+          {llmStatus&&llmStatus.selected_provider==='claude'&&!llmStatus.claude_balance_ok&&(
+            <div style={{fontSize:7.5,color:'var(--amber)',borderRight:'1px solid var(--bdr)',paddingRight:10,marginRight:4}}>
+              ⚡ Fallback: Ollama
+            </div>)}
+          <div className="cg"><div className="cl">GNS3 Port</div>
+            <input className="ci" type="number" value={port} onChange={e=>setPort(parseInt(e.target.value))}/>
+          </div>
+          {/* ON-DEMAND buttons — Ollama */}
+          <button className={`btn btn-disc${discovering?' running':''}`} onClick={discover} disabled={discovering||running}
+            title="Discover device: inventory, topology, CDP/LLDP [Ollama]">
+            {discovering?'⬡ SCANNING...':'⬡ DISCOVER [Ollama]'}
+          </button>
+          <button className={`btn btn-sim${simRunning?' running':''}`} onClick={simulate} disabled={simRunning||running}
+            title="Simulate intent on running config [Ollama]">
+            {simRunning?'⬡ SIMULATING...':'⬤ SIMULATE'}
+          </button>
+          <button className={`btn btn-anom${anomRunning?' running':''}`} onClick={()=>scanAnomalies(false)} disabled={anomRunning||running}
+            title="Scan for config anomalies [Ollama]">
+            {anomRunning?'⬡ SCANNING...':'⚠ ANOMALIES [Ollama]'}
+          </button>
+          {/* PIPELINE button — Claude */}
+          <button className={`btn btn-run${running?' running':''}`} onClick={run} disabled={running}
+            title={`Run full analysis pipeline [${provider==='claude'?'Claude':'Ollama'}]`}>
+            {running?'⬡ RUNNING...':`▶ PIPELINE [${provider==='claude'?(llmStatus&&!llmStatus.claude_balance_ok?'Ollama⚡':'Claude'):provider==='local'?'Ollama':'?'}]`}
+          </button>
+          {/* MCP PIPELINE — Claude tool-calling loop */}
+          <button className={`btn${mcpRunning?' running':''}`} onClick={runMcpPipeline} disabled={mcpRunning||running}
+            title="Supervisor Agent → Domain Agents → MCP Tools → Netmiko SSH → Genie JSON → Claude Analysis"
+            style={{background:'linear-gradient(135deg,#1a1a3a,var(--violet))',color:'#fff',height:32,padding:'0 12px',border:'none',borderRadius:3,fontFamily:"'Barlow Condensed',sans-serif",fontSize:12,fontWeight:800,letterSpacing:'.1em',textTransform:'uppercase',cursor:'pointer',opacity:(mcpRunning||running)?0.5:1}}>
+            {mcpRunning?'⬡ PIPELINE...':'⬡ MCP PIPELINE'}
+          </button>
+          {/* DOMAIN EXPERT AGENTS */}
+          <button className={`btn${agentRunning?' running':''}`} onClick={runAgentAnalysis} disabled={agentRunning||running}
+            title="Run domain expert agents: ospf/bgp/interface/acl/routing/cdp/vlan"
+            style={{background:'linear-gradient(135deg,#1a2a1a,var(--green))',color:'#000',height:32,padding:'0 12px',border:'none',borderRadius:3,fontFamily:"'Barlow Condensed',sans-serif",fontSize:12,fontWeight:800,letterSpacing:'.1em',textTransform:'uppercase',cursor:'pointer',opacity:(agentRunning||running)?0.5:1}}>
+            {agentRunning?'⊕ AGENTS...':'⊕ AGENTS (via MCP)'}
+          </button>
+          {/* SNAPSHOT buttons */}
+          <button onClick={()=>takeSnapshot('pre')} disabled={running||mcpRunning} title="Take Genie PRE snapshot"
+            style={{height:32,padding:'0 8px',border:'1px solid var(--cyan)',borderRadius:3,background:'transparent',color:'var(--cyan)',fontFamily:"'IBM Plex Mono',monospace",fontSize:8,fontWeight:700,cursor:'pointer',opacity:(running||mcpRunning)?0.4:1}}>📸PRE</button>
+          <button onClick={()=>takeSnapshot('post')} disabled={running||mcpRunning} title="Take Genie POST snapshot"
+            style={{height:32,padding:'0 8px',border:'1px solid var(--amber)',borderRadius:3,background:'transparent',color:'var(--amber)',fontFamily:"'IBM Plex Mono',monospace",fontSize:8,fontWeight:700,cursor:'pointer',opacity:(running||mcpRunning)?0.4:1}}>📸POST</button>
+        </div>
+      </div>
+
+      {/* PIPELINE BAR */}
+      <div className="pipe">
+        {STAGES.map((s,i)=>(
+          <div key={s.id} className={`ps ${stageStatus[i]}`}>
+            <div className="sn">{stageStatus[i]==='done'?'✓':stageStatus[i]==='error'?'✕':(i+1)}</div>
+            <div><div className="snm">{s.name}</div><div className="stch">{s.tech}</div></div>
+          </div>))}
+      </div>
+
+      {/* MCP PIPELINE PHASE BAR — shown when mcpRunning or mcpResult exists */}
+      {(mcpRunning||mcpResult)&&(
+        <div style={{flexShrink:0,display:'flex',alignItems:'stretch',background:'rgba(0,0,16,.6)',
+          borderBottom:'1px solid rgba(0,212,170,.2)',height:36,padding:'0 18px',gap:2,overflowX:'auto'}}>
+          {MCP_PHASES.map((ph,i)=>{
+            const done = mcpPhase > i;
+            const active = mcpPhase === i;
+            const err = mcpPhase === -1 && i === 0;
+            const c = done?'var(--cyan)':active?'var(--violet)':err?'var(--rose)':'var(--dim)';
+            return(
+              <div key={ph.id} style={{
+                display:'flex',alignItems:'center',gap:4,padding:'0 10px',
+                borderBottom:active?'2px solid var(--violet)':done?'2px solid var(--cyan)':'2px solid transparent',
+                transition:'all .3s',minWidth:0,flex:'0 0 auto'}}>
+                <span style={{fontSize:11,opacity:done||active?1:.3}}>{ph.icon}</span>
+                <div>
+                  <div style={{fontSize:8,fontWeight:700,color:c,lineHeight:1.1,letterSpacing:'.04em'}}>
+                    {active&&mcpRunning&&'⟳ '}{ph.name}
+                  </div>
+                  <div style={{fontSize:6,color:done?'var(--cyan)':active?'var(--violet)':'var(--dim)',letterSpacing:'.06em'}}>{ph.tech}</div>
+                </div>
+                {i<7&&<div style={{width:12,height:1,background:done?'var(--cyan)':'var(--bdr)',marginLeft:4,flexShrink:0}}/>}
+              </div>);
+          })}
+        </div>)}
+
+      {/* LLM STATUS BANNER — shows Claude health, active provider, fallback status */}
+      {llmStatus&&(
+        <div style={{flexShrink:0,display:'flex',alignItems:'center',gap:12,padding:'4px 18px',
+          background: llmStatus.claude_balance_ok
+            ? 'rgba(0,212,170,.04)'
+            : 'rgba(255,176,32,.08)',
+          borderBottom:`1px solid ${llmStatus.claude_balance_ok?'rgba(0,212,170,.15)':'rgba(255,176,32,.35)'}`,
+          fontSize:8}}>
+          {/* Active provider */}
+          <div style={{display:'flex',alignItems:'center',gap:4,borderRight:'1px solid rgba(255,255,255,.06)',paddingRight:10,marginRight:4}}>
+            <div style={{width:6,height:6,borderRadius:'50%',background:provider==='claude'?'var(--cyan)':'var(--green)',boxShadow:`0 0 6px ${provider==='claude'?'var(--cyan)':'var(--green)'}`}}/>
+            <span style={{fontSize:8.5,fontWeight:700,color:provider==='claude'?'var(--cyan)':'var(--green)'}}>
+              {provider==='claude'?(llmStatus.claude_balance_ok?'Claude':'Ollama⚡'):'Ollama'}
+            </span>
+            <span style={{fontSize:7,color:'var(--mut)'}}>
+              {provider==='claude'?(llmStatus.claude_balance_ok?'active':'fallback active'):'local active'}
+            </span>
+          </div>
+          {/* Claude status */}
+          <div style={{display:'flex',alignItems:'center',gap:5}}>
+            <div style={{width:5,height:5,borderRadius:'50%',
+              background: llmStatus.claude_balance_ok&&llmStatus.anthropic_key_set
+                ?'var(--cyan)':'var(--amber)'}}/>
+            <span style={{color:'var(--mut)',textTransform:'uppercase',letterSpacing:'.12em'}}>Claude</span>
+            <span style={{fontWeight:700,color: llmStatus.claude_balance_ok&&llmStatus.anthropic_key_set
+              ?'var(--cyan)':'var(--amber)'}}>
+              {!llmStatus.anthropic_key_set?'NO KEY SET'
+                :llmStatus.claude_balance_ok?`${llmStatus.claude_model} · active`
+                :'CREDIT EXHAUSTED → Ollama fallback'}
+            </span>
+          </div>
+          <div style={{color:'var(--dim)'}}>|</div>
+          {/* Token budget */}
+          <div style={{color:'var(--mut)'}}>
+            Budget: <span style={{color:'var(--txt)',fontWeight:600}}>
+              ≤{llmStatus.max_input_tokens} in / ≤{llmStatus.max_output_tokens} out tokens
+            </span>
+          </div>
+          <div style={{color:'var(--dim)'}}>|</div>
+          {/* Rate limit */}
+          <div style={{color:'var(--mut)'}}>
+            Rate: <span style={{color:'var(--txt)',fontWeight:600}}>
+              ≤{(60/llmStatus.rate_limit_interval_s).toFixed(0)} RPM · ≥{llmStatus.rate_limit_interval_s}s between calls
+            </span>
+          </div>
+          <div style={{color:'var(--dim)'}}>|</div>
+          {/* Ollama status */}
+          <div style={{display:'flex',alignItems:'center',gap:5}}>
+            <div style={{width:5,height:5,borderRadius:'50%',background:'var(--green)'}}/>
+            <span style={{color:'var(--mut)',textTransform:'uppercase',letterSpacing:'.12em'}}>Ollama</span>
+            <span style={{fontWeight:700,color:'var(--green)'}}>{llmStatus.ollama_model} · ready</span>
+          </div>
+          <div style={{color:'var(--dim)'}}>|</div>
+          {/* Genie Diff status */}
+          <div style={{display:'flex',alignItems:'center',gap:5}}>
+            <div style={{width:5,height:5,borderRadius:'50%',background:llmStatus.genie_diff_available?'var(--cyan)':'var(--mut)'}}/>
+            <span style={{color:'var(--mut)',textTransform:'uppercase',letterSpacing:'.12em'}}>Genie Diff</span>
+            <span style={{fontWeight:700,color:llmStatus.genie_diff_available?'var(--cyan)':'var(--mut)'}}>
+              {llmStatus.genie_diff_available?'ready':'no pyATS'}
+            </span>
+          </div>
+          <div style={{color:'var(--dim)'}}>|</div>
+          {/* Netmiko status */}
+          <div style={{display:'flex',alignItems:'center',gap:5}}>
+            <div style={{width:5,height:5,borderRadius:'50%',background:llmStatus.netmiko_available?'var(--green)':'var(--mut)'}}/>
+            <span style={{color:'var(--mut)',textTransform:'uppercase',letterSpacing:'.12em'}}>Netmiko SSH</span>
+            <span style={{fontWeight:700,color:llmStatus.netmiko_available?'var(--green)':'var(--mut)'}}>
+              {llmStatus.netmiko_available?'ready':'not installed'}
+            </span>
+          </div>
+          {/* Credit warning */}
+          {!llmStatus.claude_balance_ok&&(
+            <>
+              <div style={{color:'var(--dim)'}}>|</div>
+              <span style={{color:'var(--amber)',fontWeight:700}}>
+                ⚠ Add credits at console.anthropic.com — pipeline running on Ollama
+              </span>
+              <button onClick={async()=>{
+                  await fetch(`${API}/reset_claude`,{method:'POST'});
+                  pollLlmStatus();
+                }}
+                style={{background:'transparent',border:'1px solid var(--amber)',borderRadius:2,
+                  color:'var(--amber)',cursor:'pointer',fontSize:7,padding:'2px 6px',marginLeft:4}}>
+                Reset
+              </button>
+            </>
+          )}
+        </div>
+      )}
+
+      {/* MAIN */}
+      <div className="main" style={{flex:1,overflow:'hidden'}}>
+
+        {/* LEFT: INTENT + DISCOVERY STATUS + CRITICAL NODES + LOGS */}
+        <div className="col">
+          <div className="ph">
+            <div className="pt">Change Intent</div>
+            <div className="ptag" style={{background:'rgba(0,212,170,.1)',color:'var(--cyan)'}}>CLI</div>
+          </div>
+          <div style={{padding:'10px 11px',flexShrink:0}}>
+            <textarea className="intent-ta" value={intent} onChange={e=>setIntent(e.target.value)} rows={5}
+              placeholder="Cisco IOS CLI commands to apply..."/>
+          </div>
+
+          {/* Discovery status */}
+          {savedInvMeta&&(
+            <div className="disc-status">
+              <div className="disc-dot"></div>
+              <div>
+                <div style={{fontWeight:600}}>Inventory Saved — {savedInvMeta.interface_count} interfaces</div>
+                <div style={{color:'rgba(0,230,118,.6)',fontSize:7}}>{savedInvMeta.timestamp} · Pipeline will use cached data</div>
+              </div>
+              <button onClick={async()=>{
+                  await fetch(`${API}/clear_inventory`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({port})});
+                  setSavedInvMeta(null);addLogs(['[DISCOVER] Inventory cache cleared.']);
+                }}
+                style={{marginLeft:'auto',background:'transparent',border:'1px solid rgba(255,69,96,.3)',borderRadius:2,color:'var(--rose)',cursor:'pointer',fontSize:7,padding:'2px 6px'}}>
+                Clear
+              </button>
+            </div>
+          )}
+
+          {/* Intent-mode anomaly button */}
+          <div style={{padding:'0 11px 8px',flexShrink:0,display:'flex',gap:6}}>
+            <button className={`btn btn-anom`} style={{flex:1,height:26,fontSize:9}}
+              onClick={()=>scanAnomalies(true)} disabled={anomRunning||running}
+              title="Run anomaly scan correlated with intent [Ollama]">
+              {anomRunning?'⬡ SCANNING...':'⚠ ANOMALIES + INTENT [Ollama]'}
+            </button>
+          </div>
+
+          {/* Critical nodes */}
+          {result?.critical_nodes?.length>0&&(
+            <div style={{padding:'0 11px 8px',flexShrink:0}}>
+              <div style={{fontSize:7,color:'var(--mut)',textTransform:'uppercase',letterSpacing:'.2em',marginBottom:5}}>Critical Nodes</div>
+              {result.critical_nodes.slice(0,5).map(n=>(
+                <div key={n.id} style={{display:'flex',gap:6,alignItems:'flex-start',marginBottom:3,padding:'3px 7px',background:'var(--pan)',border:'1px solid var(--bdr)',borderRadius:3}}>
+                  <div style={{width:4,height:4,borderRadius:'50%',background:'var(--rose)',flexShrink:0,marginTop:4}}></div>
+                  <div style={{flex:1,minWidth:0}}>
+                    <div style={{fontSize:8.5,color:'#fff',fontWeight:600,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{n.id}</div>
+                    <div style={{height:2,borderRadius:2,background:'var(--rose)',width:`${(n.criticality||0)*100}%`,marginTop:2}}></div>
+                  </div>
+                  <div style={{fontSize:8.5,color:'var(--rose)',fontWeight:700,flexShrink:0}}>{((n.criticality||0)*100).toFixed(0)}%</div>
+                </div>))}
+            </div>
+          )}
+
+          {/* Activity log */}
+          <div className="ph" style={{borderTop:'1px solid var(--bdr)'}}>
+            <div className="pt">Activity Log</div>
+            <div style={{fontSize:7,color:'var(--mut)'}}>{logs.length} lines</div>
+          </div>
+          <div className="pb">
+            {logs.map((line,i)=><div key={i} className={`log-ln ${lc(line)}`}>{line}</div>)}
+            <div ref={logEndRef}/>
+          </div>
+        </div>
+
+        {/* CENTER: MAIN TABS */}
+        <div className="col" style={{display:'flex',flexDirection:'column'}}>
+          <div className="tabbar">
+            {MAIN_TABS.map(t=>(
+              <button key={t} className={`tab${activeTab===t?' active':''}`} onClick={()=>setActiveTab(t)}>{t}</button>
+            ))}
+          </div>
+
+          {/* ── DECISION ── */}
+          {activeTab==='decision'&&(
+            <div className="pb">
+              {!parsed
+                ?<div className="empty">
+                    {result?.decision&&/^(Ollama Error:|Claude Error:)/i.test(result.decision.trim())
+                      ?<><div className="empty-hex" style={{color:'var(--rose)'}}>⚠</div>
+                          <div className="empty-t" style={{color:'var(--rose)'}}>LLM Timeout — Stage 5</div>
+                          <div className="empty-s" style={{color:'var(--amber)',wordBreak:'break-all',maxWidth:320}}>{result.decision.slice(0,180)}</div>
+                          <div className="empty-s" style={{marginTop:6,color:'var(--mut)'}}>Tip: switch to provider: <strong>claude</strong>, or reduce Ollama load</div></>
+                      :<><div className="empty-hex">⬡</div><div className="empty-t">Awaiting Analysis</div>
+                          <div className="empty-s">Run Pipeline to get impact-aware decision</div></>
+                    }
+                  </div>
+                :<>
+                  <div className={`dc ${vc}`}>
+                    <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:4}}>
+                      <div className="dv">{parsed.verdict}</div>
+                      <div style={{fontFamily:'Barlow Condensed,sans-serif',fontSize:22,fontWeight:700,color:rc(parsed.riskScore),lineHeight:1}}>
+                        {parsed.riskScore}<span style={{fontSize:9,color:'var(--mut)'}}>/10</span>
+                      </div>
+                    </div>
+                    {parsed.summary&&<div style={{fontSize:8.5,lineHeight:1.6,color:'var(--txt)'}}>{parsed.summary}</div>}
+                  </div>
+
+                  <div style={{marginBottom:9}}>
+                    <div className="rtk"><div className="rf" style={{width:`${parsed.riskScore*10}%`,background:rc(parsed.riskScore)}}></div></div>
+                    <div style={{display:'flex',justifyContent:'space-between',fontSize:7,color:'var(--mut)',marginTop:2}}><span>Safe</span><span>Critical</span></div>
+                  </div>
+
+                  {/* Classification badges */}
+                  {result?.classification&&(
+                    <div style={{display:'flex',flexWrap:'wrap',gap:4,marginBottom:9}}>
+                      {[[result.classification.operation,{ADD:'var(--green)',DELETE:'var(--rose)',MODIFY:'var(--amber)'}[result.classification.operation]||'var(--mut)'],
+                        [result.classification.protocol,'var(--cyan)'],
+                        [`Scope: ${result.classification.scope}`,'var(--violet)'],
+                        [`Rev: ${result.classification.reversible}`,result.classification.reversible==='YES'?'var(--green)':result.classification.reversible==='NO'?'var(--rose)':'var(--amber)'],
+                      ].filter(([l])=>l&&!l.includes('undefined')).map(([label,color])=>(
+                        <span key={label} style={{fontSize:7,fontWeight:700,padding:'2px 6px',borderRadius:2,textTransform:'uppercase',letterSpacing:'.1em',
+                          background:`${color}1f`,
+                          border:`1px solid ${color}47`,color}}>{label}</span>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* Impact domains */}
+                  {parsed.impacts&&Object.keys(parsed.impacts).length>0&&(
+                    <div style={{marginBottom:9}}>
+                      <div style={{fontSize:7,color:'var(--mut)',textTransform:'uppercase',letterSpacing:'.2em',marginBottom:5}}>Impact Assessment</div>
+                      {[['customer_reachability','Customer Reachability','👥'],['routing_convergence','Routing Convergence','🔄'],['network_announcement','Network Announcement','📡'],
+                        ['redundancy','Redundancy','🔀'],['policy','Policy / ACL','📋'],['service_continuity','Service Continuity','⚡'],['blast_radius_dom','Blast Radius','💥']].map(([key,label,icon])=>{
+                        const d=parsed.impacts[key]; if(!d) return null;
+                        const sc={IMPACTED:'var(--rose)',NOT_IMPACTED:'var(--green)',UNKNOWN:'var(--amber)'}[d.status]||'var(--mut)';
+                        return(
+                          <div key={key} className="imp-row">
+                            <span style={{fontSize:11}}>{icon}</span>
+                            <div>
+                              <div style={{fontSize:7,color:'var(--mut)',textTransform:'uppercase',letterSpacing:'.1em',marginBottom:1}}>{label}</div>
+                              <div style={{fontSize:8.5,color:'var(--txt)',lineHeight:1.5}}>{d.detail}</div>
+                            </div>
+                            <span style={{fontSize:7,fontWeight:700,padding:'2px 5px',borderRadius:2,textTransform:'uppercase',whiteSpace:'nowrap',alignSelf:'start',
+                              background:`${sc}1f`,border:`1px solid ${sc}40`,color:sc}}>
+                              {d.status.replace('_',' ')}
+                            </span>
+                          </div>);
+                      })}
+                    </div>
+                  )}
+
+                  {/* CLI lines */}
+                  {result?.classification?.config_lines_classified?.length>0&&(
+                    <div style={{marginBottom:9}}>
+                      <div style={{fontSize:7,color:'var(--mut)',textTransform:'uppercase',letterSpacing:'.2em',marginBottom:5}}>CLI Lines Classified</div>
+                      {result.classification.config_lines_classified.map((cl,i)=>(
+                        <div key={i} style={{display:'flex',gap:7,padding:'4px 7px',background:'var(--pan)',border:'1px solid var(--bdr)',
+                          borderLeft:`3px solid ${cl.destructive?'var(--rose)':'var(--green)'}`,borderRadius:'0 3px 3px 0',marginBottom:3}}>
+                          <code style={{fontSize:8,color:cl.destructive?'var(--rose)':'var(--cyan)',flex:'0 0 auto',minWidth:140}}>{cl.line}</code>
+                          <span style={{fontSize:8,color:'var(--mut)'}}>{cl.action}</span>
+                        </div>))}
+                    </div>
+                  )}
+
+                  {/* Blast radius */}
+                  {result?.blast_radius&&(
+                    <div style={{marginBottom:9,background:'var(--pan)',border:'1px solid var(--bdr)',borderRadius:3,padding:'8px 10px'}}>
+                      <div style={{fontSize:7,color:'var(--rose)',textTransform:'uppercase',letterSpacing:'.2em',marginBottom:5}}>💥 Blast Radius</div>
+                      <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:5,marginBottom:5}}>
+                        {[['Direct',result.blast_radius.directly_affected_prefixes],['Downstream',result.blast_radius.downstream_prefix_count],['Crit Nodes',result.blast_radius.critical_nodes_hit]].map(([l,v])=>(
+                          <div key={l} style={{textAlign:'center'}}>
+                            <div style={{fontFamily:'Barlow Condensed,sans-serif',fontSize:17,fontWeight:700,color:v>0?'var(--rose)':'var(--green)',lineHeight:1}}>{v}</div>
+                            <div style={{fontSize:7,color:'var(--mut)',textTransform:'uppercase',letterSpacing:'.07em',marginTop:2}}>{l}</div>
+                          </div>))}
+                      </div>
+                      {result.blast_radius.downstream_prefixes_sample?.length>0&&<div style={{fontSize:8,color:'var(--mut)'}}>Affected: {result.blast_radius.downstream_prefixes_sample.join(', ')}</div>}
+                    </div>
+                  )}
+
+                  {parsed.execSteps.length>0&&(
+                    <div style={{marginBottom:8}}>
+                      <div style={{fontSize:7,color:'var(--mut)',textTransform:'uppercase',letterSpacing:'.2em',marginBottom:5}}>Execution Plan</div>
+                      {parsed.execSteps.map((s,i)=>(
+                        <div key={i} style={{display:'flex',gap:6,padding:'4px 0',borderBottom:'1px solid var(--bdr)',fontSize:8.5}}>
+                          <span style={{color:'var(--cyan)',fontWeight:700,flexShrink:0}}>{i+1}.</span><span>{s}</span>
+                        </div>))}
+                    </div>
+                  )}
+
+                  {parsed.rollback.length>0&&(
+                    <div style={{marginBottom:8}}>
+                      <div style={{fontSize:7,color:'var(--rose)',textTransform:'uppercase',letterSpacing:'.2em',marginBottom:5}}>⚠ Rollback</div>
+                      {parsed.rollback.map((s,i)=>(
+                        <div key={i} style={{display:'flex',gap:6,padding:'4px 0',borderBottom:'1px solid var(--bdr)',fontSize:8.5}}>
+                          <span style={{color:'var(--rose)',fontWeight:700,flexShrink:0}}>{i+1}.</span><span>{s}</span>
+                        </div>))}
+                    </div>
+                  )}
+
+                  {parsed.reasoning&&(
+                    <div>
+                      <div style={{fontSize:7,color:'var(--mut)',textTransform:'uppercase',letterSpacing:'.2em',marginBottom:5}}>Technical Reasoning</div>
+                      <div style={{fontSize:8.5,lineHeight:1.7,color:'var(--txt)'}}>{parsed.reasoning}</div>
+                    </div>
+                  )}
+                </>}
+            </div>
+          )}
+
+          {/* ── TOPOLOGY ── */}
+          {activeTab==='topology'&&(
+            <div style={{flex:1,display:'flex',flexDirection:'column',overflow:'hidden'}}>
+              {result&&(
+                <div style={{flexShrink:0,display:'flex',gap:4,padding:'6px 11px',borderBottom:'1px solid var(--bdr)',flexWrap:'wrap'}}>
+                  {[['CDP',(result.inventory?.cdp_neighbors||[]).length,'var(--blue)'],
+                    ['LLDP',(result.inventory?.lldp_neighbors||[]).length,'var(--violet)'],
+                    ['OSPF Nbrs',(result.inventory?.protocols?.ospf?.neighbors||[]).length,'var(--amber)'],
+                    ['Nodes',result.topology?.graph_stats?.node_count,'var(--cyan)'],
+                    ['Edges',result.topology?.graph_stats?.edge_count,'var(--green)'],
+                    ['Density',result.topology?.graph_stats?.density,'var(--mut)'],
+                  ].map(([l,v,c])=>(
+                    <div key={l} style={{background:'var(--pan)',border:'1px solid var(--bdr)',borderRadius:3,padding:'4px 7px',minWidth:52}}>
+                      <div style={{fontFamily:'Barlow Condensed,sans-serif',fontSize:15,fontWeight:700,color:c,lineHeight:1}}>{v??'—'}</div>
+                      <div style={{fontSize:6.5,color:'var(--mut)',textTransform:'uppercase',letterSpacing:'.08em',marginTop:2}}>{l}</div>
+                    </div>))}
+                </div>
+              )}
+              <TopoViz physTopo={result?.physical_topology} igraphTopo={result?.topology} critNodes={result?.critical_nodes}/>
+            </div>
+          )}
+
+          {/* ── SIMULATE ── */}
+          {activeTab==='simulate'&&<SimPanel simResult={simResult}/>}
+
+          {/* ── MCP PIPELINE ── */}
+          {activeTab==='mcp'&&<McpPanel mcpResult={mcpResult}/>}
+          {activeTab==='agents'&&<AgentPanel agentData={agentResult} pipelineResult={mcpResult}/>}
+
+          {/* ── ANOMALY ── */}
+          {activeTab==='anomaly'&&<AnomalyPanel anomalyResult={anomalyResult}/>}
+
+          {/* ── HEALING ── */}
+          {activeTab==='healing'&&(
+            <div className="pb">
+              {!result?.audit_trail
+                ?<div className="empty"><div className="empty-hex">⬡</div><div className="empty-t">No Healing Data</div></div>
+                :<>{result.audit_trail.map(a=>(
+                  <div key={a.iteration} style={{background:'var(--pan)',border:'1px solid var(--bdr)',borderRadius:3,padding:'7px 9px',marginBottom:5}}>
+                    <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:4}}>
+                      <span style={{fontSize:8,color:'var(--mut)'}}>Iteration {a.iteration}</span>
+                      <div style={{display:'flex',gap:7,alignItems:'center'}}>
+                        <span style={{fontFamily:'Barlow Condensed,sans-serif',fontSize:15,fontWeight:700,color:a.risk_score<.3?'var(--green)':a.risk_score<.6?'var(--amber)':'var(--rose)',lineHeight:1}}>{(a.risk_score*100).toFixed(1)}%</span>
+                        <span style={{fontSize:8,color:a.accepted?'var(--green)':'var(--amber)'}}>{a.accepted?'✓ ACCEPTED':'↺ RETRY'}</span>
+                      </div>
+                    </div>
+                    <div style={{fontSize:8,color:'var(--mut)',background:'var(--bg)',padding:'5px',borderRadius:2,whiteSpace:'pre-wrap',wordBreak:'break-all'}}>
+                      {(a.proposed||'').slice(0,280)}{(a.proposed||'').length>280?'...':''}
+                    </div>
+                  </div>))}
+                </>}
+            </div>
+          )}
+
+          {/* ── VALIDATION ── */}
+          {activeTab==='validation'&&(
+            <div className="pb">
+              {!result?.validation
+                ?<div className="empty"><div className="empty-hex">⬡</div><div className="empty-t">No Validation Data</div></div>
+                :<>
+                  <div style={{display:'flex',gap:5,marginBottom:9}}>
+                    {[[result.validation.issues.length,'Issues','var(--rose)'],[result.validation.warnings.length,'Warnings','var(--amber)'],[result.validation.passed.length,'Passed','var(--green)']].map(([count,label,color])=>(
+                      <div key={label} style={{flex:1,background:'var(--pan)',border:`1px solid ${color}33`,borderRadius:3,padding:'7px 8px',textAlign:'center'}}>
+                        <div style={{fontFamily:'Barlow Condensed,sans-serif',fontSize:22,fontWeight:700,color,lineHeight:1}}>{count}</div>
+                        <div style={{fontSize:7,color:'var(--mut)',textTransform:'uppercase',letterSpacing:'.1em',marginTop:2}}>{label}</div>
+                      </div>))}
+                  </div>
+                  <div style={{background:result.validation.safe_to_proceed?'rgba(0,230,118,.06)':'rgba(255,69,96,.06)',
+                    border:`1px solid ${result.validation.safe_to_proceed?'rgba(0,230,118,.3)':'rgba(255,69,96,.3)'}`,
+                    borderRadius:3,padding:'8px 10px',marginBottom:9,fontSize:9.5,fontWeight:600,
+                    color:result.validation.safe_to_proceed?'var(--green)':'var(--rose)'}}>
+                    {result.validation.safe_to_proceed?'✓ SAFE TO PROCEED':'✕ BLOCKED — Resolve issues before pushing config'}
+                  </div>
+
+                  {/* Variables from device twin */}
+                  {(result.validation.device_iface_ips?.length||result.validation.device_routing_ips?.length)&&(
+                    <div style={{marginBottom:9,padding:'8px 9px',background:'var(--pan)',border:'1px solid var(--bdr)',borderRadius:3}}>
+                      <div style={{fontSize:7,color:'var(--mut)',textTransform:'uppercase',letterSpacing:'.15em',marginBottom:5}}>Variables Checked Against Device Twin</div>
+                      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8}}>
+                        <div>
+                          <div style={{fontSize:7,color:'var(--blue)',textTransform:'uppercase',letterSpacing:'.1em',marginBottom:3}}>Interface IPs ({(result.validation.device_iface_ips||[]).length})</div>
+                          {(result.validation.device_iface_ips||[]).slice(0,8).map((ip,i)=><div key={i} style={{fontSize:8,color:'var(--cyan)',padding:'1px 0'}}>{ip}</div>)}
+                          {(result.validation.device_iface_ips||[]).length>8&&<div style={{fontSize:7,color:'var(--mut)'}}>+{(result.validation.device_iface_ips||[]).length-8} more</div>}
+                        </div>
+                        <div>
+                          <div style={{fontSize:7,color:'var(--amber)',textTransform:'uppercase',letterSpacing:'.1em',marginBottom:3}}>Routing IPs ({(result.validation.device_routing_ips||[]).length})</div>
+                          {(result.validation.device_routing_ips||[]).slice(0,8).map((ip,i)=><div key={i} style={{fontSize:8,color:'var(--amber)',padding:'1px 0'}}>{ip}</div>)}
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {[[result.validation.issues,'✕ Issues','var(--rose)'],[result.validation.warnings,'⚠ Warnings','var(--amber)'],[result.validation.passed,'✓ Passed','var(--green)']].map(([items,label,color])=>
+                    items?.length>0&&(
+                      <div key={label} style={{marginBottom:8}}>
+                        <div style={{fontSize:7,color,textTransform:'uppercase',letterSpacing:'.15em',marginBottom:4}}>{label} ({items.length})</div>
+                        {items.map((item,i)=>(
+                          <div key={i} className="vi">
+                            <div className="vdot" style={{background:color}}></div><span>{item}</span>
+                          </div>))}
+                      </div>))}
+                </>}
+            </div>
+          )}
+
+          {/* ── CONFIG ── */}
+          {activeTab==='config'&&(
+            <div className="pb">
+              {!result?.healed_config
+                ?<div className="empty"><div className="empty-hex">⬡</div><div className="empty-t">No Healed Config</div></div>
+                :<>
+                  <div style={{fontSize:7,color:'var(--mut)',textTransform:'uppercase',letterSpacing:'.2em',marginBottom:6}}>Recursively Healed Configuration</div>
+                  <pre style={{fontSize:9.5,color:'#7ee787',background:'#060a0f',border:'1px solid var(--bdr2)',borderRadius:3,padding:10,whiteSpace:'pre-wrap',wordBreak:'break-all',marginBottom:9,lineHeight:1.7}}>{result.healed_config}</pre>
+                  {result.used_saved_inventory&&<div style={{fontSize:8,color:'var(--cyan)',padding:'4px 0'}}>ℹ Stages 1-2 used cached inventory — collection was skipped.</div>}
+                </>}
+            </div>
+          )}
+
+          {/* ── TWIN ── */}
+          {activeTab==='twin'&&(
+            <div className="pb">
+              {!result?.digital_twin
+                ?<div className="empty"><div className="empty-hex">⬡</div><div className="empty-t">No Digital Twin</div></div>
+                :<pre style={{fontSize:7,color:'var(--amber)',lineHeight:1.6,whiteSpace:'pre-wrap',wordBreak:'break-all'}}>{JSON.stringify(result.digital_twin,null,2)}</pre>}
+            </div>
+          )}
+
+          {/* ── INVENTORY ── */}
+          {activeTab==='inventory'&&(
+            <InventoryPanel inventory={result?.inventory} twin={result?.digital_twin}/>
+          )}
+
+          {activeTab==='chat'&&(
+            <ChatPanel analysisContext={chatContext} port={port}/>
+          )}
+        </div>
+
+        {/* RIGHT: IGRAPH METRICS + RAW LLM */}
+        <div className="col">
+          <div className="ph"><div className="pt">Topology Metrics</div><div className="ptag" style={{background:'rgba(124,92,252,.1)',color:'var(--violet)'}}>iGraph</div></div>
+          <div className="pb" style={{flex:'0 0 auto',maxHeight:250}}>
+            {result?.topology
+              ?<>
+                <div className="mg">
+                  {[['Nodes',result.topology.graph_stats?.node_count,'var(--cyan)'],['Edges',result.topology.graph_stats?.edge_count,'var(--blue)'],
+                    ['Density',result.topology.graph_stats?.density,'var(--violet)'],['Avg Deg',result.topology.graph_stats?.avg_degree,'var(--amber)']].map(([l,v,c])=>(
+                    <div key={l} className="mc"><div className="mv" style={{color:c}}>{v??'—'}</div><div className="ml">{l}</div></div>))}
+                </div>
+                <div style={{fontSize:7,color:'var(--mut)',textTransform:'uppercase',letterSpacing:'.2em',marginBottom:5}}>Centrality Table</div>
+                <div>
+                  <div style={{display:'grid',gridTemplateColumns:'1fr 38px 32px 38px',gap:2,color:'var(--mut)',borderBottom:'1px solid var(--bdr)',paddingBottom:4,marginBottom:4,fontSize:7}}>
+                    <span>Node</span><span style={{textAlign:'right'}}>Crit</span><span style={{textAlign:'right'}}>Deg</span><span style={{textAlign:'right'}}>PR</span>
+                  </div>
+                  {[...(result.topology.nodes||[])].sort((a,b)=>b.criticality-a.criticality).map(n=>(
+                    <div key={n.id} style={{display:'grid',gridTemplateColumns:'1fr 38px 32px 38px',gap:2,padding:'2px 0',borderBottom:'1px solid rgba(28,40,54,.3)',fontSize:8}}>
+                      <span style={{color:'var(--txt)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{n.id}</span>
+                      <span style={{textAlign:'right',color:n.criticality>.6?'var(--rose)':n.criticality>.3?'var(--amber)':'var(--green)',fontWeight:700,fontSize:7}}>{(n.criticality*100).toFixed(0)}%</span>
+                      <span style={{textAlign:'right',color:'var(--mut)',fontSize:7}}>{n.degree}</span>
+                      <span style={{textAlign:'right',color:'var(--mut)',fontSize:7}}>{n.pagerank?.toFixed(3)}</span>
+                    </div>))}
+                </div>
+              </>
+              :<div className="empty" style={{minHeight:80}}><div className="empty-hex">⬡</div><div className="empty-t">No Metrics</div></div>
+            }
+          </div>
+
+          <div className="ph" style={{borderTop:'1px solid var(--bdr)'}}><div className="pt">Raw LLM Output</div><div className="ptag" style={{background:'rgba(0,230,118,.1)',color:'var(--green)'}}>Stage 5</div></div>
+          <div className="pb">
+            {result?.decision
+              ?<div style={{fontSize:7.5,lineHeight:1.7,color:'var(--mut)',whiteSpace:'pre-wrap'}}>{result.decision}</div>
+              :<div style={{fontSize:8,color:'var(--dim)',fontStyle:'italic'}}>// LLM reasoning will appear here after pipeline.</div>}
+          </div>
+        </div>
+
+      </div>
+    </div>
+  );
+};
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App/>);
+</script>
+</body>
+</html>
