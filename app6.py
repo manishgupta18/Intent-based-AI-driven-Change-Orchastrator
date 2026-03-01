@@ -276,7 +276,7 @@ def _call_ollama(prompt: str, model: str = None) -> str:
     ollama_model = model or OLLAMA_MODEL
     try:
         payload = {"model": ollama_model, "prompt": prompt, "stream": False}
-        r = requests.post(OLLAMA_URL, json=payload, timeout=300)
+        r = requests.post(OLLAMA_URL, json=payload, timeout=600)
         return r.json().get("response", "")
     except Exception as e:
         return f"Ollama Error: {str(e)}"
@@ -4258,23 +4258,23 @@ Output ONLY valid JSON (no markdown, no preamble, no ```json):
         except Exception as parse_err:
             logs.append(f"[PHASE:7] JSON parse failed ({parse_err}) — deriving from agent data")
             # Derive from agent data if LLM JSON fails
-            verdict_parsed = {{
+            verdict_parsed = {
                 "verdict":     ("CRITICAL" if critical_count >= 1
                                 else "WARNING" if warning_count >= 1 else "SAFE"),
                 "risk_score":  min(1.0, round(critical_count * 0.5 + warning_count * 0.2, 2)),
-                "summary":     f"Agent analysis: {{critical_count}} critical, {{warning_count}} warnings",
+                "summary":     f"Agent analysis: {critical_count} critical, {warning_count} warnings",
                 "findings":    all_risks[:10],
                 "recommendation": raw_verdict[:300] if raw_verdict else "Review agent findings",
                 "rollback_commands": [],
                 "ccie_analysis": agent_reasoning or "See agent findings",
-                "blast_radius": f"{{critical_count}} critical issues across {{len(selected_agents)}} domains",
-            }}
+                "blast_radius": f"{critical_count} critical issues across {len(selected_agents)} domains",
+            }
 
         # ═══════════════════════════════════════════════════════════
         # PHASE 8: Result Assembly
         # ═══════════════════════════════════════════════════════════
         logs.append(f"[PHASE:8] Assembling full result for GUI...")
-        result = {{
+        result = {
             # Supervisor verdict
             "verdict":            verdict_parsed.get("verdict", "UNKNOWN"),
             "risk_score":         verdict_parsed.get("risk_score", 0.0),
@@ -4313,17 +4313,17 @@ Output ONLY valid JSON (no markdown, no preamble, no ```json):
             "raw_verdict": raw_verdict,
             "logs":        logs,
             "timestamp":   time.strftime("%Y-%m-%d %H:%M:%S"),
-        }}
+        }
 
-        _save_to_disk(f"mcp_pipeline_port_{{port}}", result)
+        _save_to_disk(f"mcp_pipeline_port_{port}", result)
         return jsonify(result)
 
     except Exception as e:
         tb  = traceback.format_exc()
         msg = str(e)
-        logs.append(f"[FATAL] {{msg}}")
+        logs.append(f"[FATAL] {msg}")
         short_tb = "\n".join(tb.split("\n")[-12:])
-        return jsonify({{"error": msg, "traceback": short_tb, "logs": logs}}), 500
+        return jsonify({"error": msg, "traceback": short_tb, "logs": logs}), 500
 
     finally:
         # Always clean up MCP connections
