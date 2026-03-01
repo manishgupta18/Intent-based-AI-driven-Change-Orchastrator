@@ -282,13 +282,18 @@ def _call_claude(prompt: str, model: str = None, system: str = None,
         return f"Claude Error: {str(e)}"
 
 # ── OLLAMA CALL ────────────────────────────────────────────────────────────
-def _call_ollama(prompt: str, model: str = None) -> str:
-    """Call local Ollama. Used for on-demand ops AND as Claude fallback."""
+def _call_ollama(prompt: str, model: str = None, system: str = None) -> str:
+    """Call local Ollama. Used for on-demand ops AND as Claude fallback.
+    system: optional role/context prepended to prompt (Ollama has no native system field).
+    """
     ollama_model = model or OLLAMA_MODEL
-    prompt = _truncate_prompt(prompt, 3000)   # cap at ~3 K tokens — local models slow on large contexts
+    # Prepend system context when provided (restores CCIE expert framing for Stage 5)
+    if system:
+        prompt = f"{system}\n\n{prompt}"
+    prompt = _truncate_prompt(prompt, MAX_INPUT_TOKENS)   # same budget as Claude
     try:
         payload = {"model": ollama_model, "prompt": prompt, "stream": False}
-        r = requests.post(OLLAMA_URL, json=payload, timeout=600)  # 10 min (was 5 min)
+        r = requests.post(OLLAMA_URL, json=payload, timeout=600)  # 10 min
         return r.json().get("response", "")
     except Exception as e:
         return f"Ollama Error: {str(e)}"
@@ -315,10 +320,10 @@ def call_ai(prompt: str, provider: str = None, model: str = None,
         # Auto-fallback on any Claude error (credit, key, rate)
         if result.startswith("Claude Error:"):
             print(f"[FALLBACK] Claude failed → Ollama: {result[:80]}")
-            return _call_ollama(prompt, model=model)
+            return _call_ollama(prompt, model=model, system=system)
         return result
     else:
-        return _call_ollama(prompt, model=model)
+        return _call_ollama(prompt, model=model, system=system)
 
 def get_llm_status() -> dict:
     """Return current LLM health for /health endpoint."""
@@ -1797,10 +1802,10 @@ CORE PRINCIPLES:
         "all_risk_indicators": all_risks[:15],
     }, indent=2, default=str)
 
-    # Truncate — provider-aware: local Ollama needs a much smaller context
-    ctx_limit = 5000 if provider == 'local' else 12000
-    if len(device_ctx_json) > ctx_limit:
-        device_ctx_json = device_ctx_json[:ctx_limit] + "\n... [truncated for token budget]"
+    # Truncate to Claude-equivalent budget regardless of provider
+    # (Stage 5 always targets Claude quality; Ollama fallback gets full context too)
+    if len(device_ctx_json) > 12000:
+        device_ctx_json = device_ctx_json[:12000] + "\n... [truncated for token budget]"
 
     prompt = f"""NETWORK CHANGE IMPACT ASSESSMENT — CAB EXPERT REVIEW
 
@@ -1814,7 +1819,7 @@ STRUCTURED DEVICE STATE + AGENT FINDINGS:
 {device_ctx_json}
 
 HEALED CONFIG (what will be applied):
-{healed_config[:(500 if provider=='local' else 1500)] if healed_config else '(none)'}
+{healed_config[:1500] if healed_config else '(none)'}
 
 VALIDATION RESULTS:
 Issues blocking change: {ctx['validation_issues']}
