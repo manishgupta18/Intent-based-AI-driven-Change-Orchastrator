@@ -1,4 +1,4 @@
-import os, requests, json, subprocess, re, time, traceback, math, logging
+import os, requests, json, subprocess, re, time, traceback, math
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 
@@ -27,17 +27,6 @@ except ImportError:
 app = Flask(__name__)
 CORS(app)
 
-# ── Suppress paramiko transport thread errors (Telnet-banner 0xff noise) ────
-# paramiko logs SSHException from a background thread even when the exception
-# is caught by Netmiko.  Setting CRITICAL silences the console spam without
-# affecting functional error handling.
-logging.getLogger("paramiko.transport").setLevel(logging.CRITICAL)
-
-# ── Per-port SSH capability cache ───────────────────────────────────────────
-# Ports that responded with a Telnet IAC (0xff) instead of an SSH banner.
-# Once discovered, SSH is skipped entirely for these ports — no delay, no noise.
-_TELNET_ONLY_PORTS: set = set()
-
 # ── CONFIGURATION ──────────────────────────────────────────────────────────
 WINDOWS_IP  = "172.26.32.1"
 OLLAMA_URL  = f"http://{WINDOWS_IP}:11434/api/generate"
@@ -45,7 +34,7 @@ OLLAMA_URL  = f"http://{WINDOWS_IP}:11434/api/generate"
 # ── ANTHROPIC CLAUDE (Pipeline + Chat) ────────────────────────────────────
 # Set via env var: export ANTHROPIC_API_KEY=sk-ant-...
 # On-demand ops (discovery, simulate, anomalies, healing) always use Ollama
-ANTHROPIC_API_KEY     = os.environ.get("ANTHROPIC_API_KEY", "")  # set via env var
+ANTHROPIC_API_KEY     = os.environ.get("ANTHROPIC_API_KEY", "")  # set via env var: export ANTHROPIC_API_KEY=sk-ant-...
 CLAUDE_EXPERT_MODEL   = os.environ.get("CLAUDE_EXPERT_MODEL",   "claude-sonnet-4-6")
 CLAUDE_STANDARD_MODEL = os.environ.get("CLAUDE_STANDARD_MODEL", "claude-haiku-4-5-20251001")
 ANTHROPIC_API_URL     = "https://api.anthropic.com/v1/messages"
@@ -282,18 +271,12 @@ def _call_claude(prompt: str, model: str = None, system: str = None,
         return f"Claude Error: {str(e)}"
 
 # ── OLLAMA CALL ────────────────────────────────────────────────────────────
-def _call_ollama(prompt: str, model: str = None, system: str = None) -> str:
-    """Call local Ollama. Used for on-demand ops AND as Claude fallback.
-    system: optional role/context prepended to prompt (Ollama has no native system field).
-    """
+def _call_ollama(prompt: str, model: str = None) -> str:
+    """Call local Ollama. Used for on-demand ops AND as Claude fallback."""
     ollama_model = model or OLLAMA_MODEL
-    # Prepend system context when provided (restores CCIE expert framing for Stage 5)
-    if system:
-        prompt = f"{system}\n\n{prompt}"
-    prompt = _truncate_prompt(prompt, MAX_INPUT_TOKENS)   # same budget as Claude
     try:
         payload = {"model": ollama_model, "prompt": prompt, "stream": False}
-        r = requests.post(OLLAMA_URL, json=payload, timeout=600)  # 10 min
+        r = requests.post(OLLAMA_URL, json=payload, timeout=300)
         return r.json().get("response", "")
     except Exception as e:
         return f"Ollama Error: {str(e)}"
@@ -320,10 +303,10 @@ def call_ai(prompt: str, provider: str = None, model: str = None,
         # Auto-fallback on any Claude error (credit, key, rate)
         if result.startswith("Claude Error:"):
             print(f"[FALLBACK] Claude failed → Ollama: {result[:80]}")
-            return _call_ollama(prompt, model=model, system=system)
+            return _call_ollama(prompt, model=model)
         return result
     else:
-        return _call_ollama(prompt, model=model, system=system)
+        return _call_ollama(prompt, model=model)
 
 def get_llm_status() -> dict:
     """Return current LLM health for /health endpoint."""
@@ -509,10 +492,7 @@ def collect_device(port, logs):
 
     # ── Netmiko SSH supplement (if available) ──────────────────────────────
     # SSH can reach devices that Telnet can't, and gets cleaner output on some IOS versions
-    _port_key = str(port)
-    if str(port) in _TELNET_ONLY_PORTS:
-        logs.append(f"[COLLECT] SSH skipped — port {port} is Telnet-only (cached).")
-    elif NETMIKO_AVAILABLE and _port_key not in NETMIKO_SESSIONS:
+    if NETMIKO_AVAILABLE and str(port) not in NETMIKO_SESSIONS:
         try:
             nm = ConnectHandler(
                 device_type="cisco_ios",
@@ -521,18 +501,12 @@ def collect_device(port, logs):
                 username=GNS3_USERNAME,
                 password=GNS3_PASSWORD,
                 timeout=15,
-                banner_timeout=5,   # fast-fail if port speaks Telnet (0xff IAC)
             )
-            NETMIKO_SESSIONS[_port_key] = nm
+            NETMIKO_SESSIONS[str(port)] = nm
             raw['_netmiko_connected'] = True
             logs.append("[COLLECT] Netmiko SSH session established.")
         except Exception as e:
-            err_str = str(e)
-            if '0xff' in err_str or 'banner' in err_str.lower():
-                _TELNET_ONLY_PORTS.add(_port_key)   # cache: skip SSH next time
-                logs.append(f"[COLLECT] Port {port} speaks Telnet — SSH skipped in future.")
-            else:
-                logs.append(f"[COLLECT] Netmiko SSH unavailable: {err_str[:60]}")
+            logs.append(f"[COLLECT] Netmiko SSH unavailable: {str(e)[:60]}")
 
     logs.append(f"[COLLECT] Done. Keys: {list(raw.keys())}")
     return raw
@@ -1366,43 +1340,24 @@ def _build_minimal_topology_without_igraph(raw: dict, logs: list):
 # ══════════════════════════════════════════════════════════════════════════════
 # STAGE 3: RECURSIVE HEALING (token-budgeted — single call for Claude)
 # ══════════════════════════════════════════════════════════════════════════════
-def stage_recursive_healing(intent, topology, critical_nodes, provider, logs,
-                             max_iter=3, stage5_feedback=None):
-    """
-    Stage 3: Generate safe Cisco IOS CLI config for the given intent.
-
-    stage5_feedback: list of NO-GO reason strings from Stage 5 (dynamic closed-loop).
-    When provided, the LLM is told WHY the previous config was rejected and must
-    produce a safer config that addresses those specific constraints.
-    This is the Stage 5 → Stage 3 feedback path that makes the pipeline adaptive.
-    """
+def stage_recursive_healing(intent, topology, critical_nodes, provider, logs, max_iter=3):
     logs.append("[STAGE 3] Recursive Healing starting...")
     critical_ids = [n["id"] for n in critical_nodes]
     audit_trail  = []
 
-    # Build feedback section from Stage 5 NO-GO reasons (dynamic learning)
-    feedback_section = ""
-    if stage5_feedback:
-        logs.append(f"[STAGE 3] Stage 5 feedback: {len(stage5_feedback)} constraints to address.")
-        feedback_section = (
-            "\n\nPREVIOUS CONFIG REJECTED BY IMPACT ASSESSMENT — address these issues:\n" +
-            "\n".join(f"• {c}" for c in stage5_feedback) +
-            "\nGenerate a SAFER config that avoids ALL the above constraints."
-        )
-
     if provider == "claude":
         # Single-pass for Claude (token budget: one call instead of 3)
+        # Combine risk + healing into one prompt
         logs.append("[STAGE 3] Claude mode: single-pass heal (token-budget optimised)")
         system_prompt = (
             "You are a Cisco IOS SRE. Output ONLY syntactically correct Cisco IOS CLI "
             "commands, one per line. No prose, no markdown, no explanation."
         )
         prompt = (
-            f"Intent: '{intent[:500]}'\n"
+            f"Intent: '{intent[:500]}'\n"  # cap intent at 500 chars
             f"Critical nodes (do NOT disrupt): {critical_ids[:5]}\n"
             f"Return safe Cisco IOS CLI commands to implement the intent. "
             f"Avoid shutdown/clear/reload on critical nodes. One command per line."
-            f"{feedback_section}"
         )
         proposed = call_ai(prompt, provider, system=system_prompt)
         risk = _risk_score(proposed, critical_ids)
@@ -1412,17 +1367,8 @@ def stage_recursive_healing(intent, topology, critical_nodes, provider, logs,
         logs.append(f"[STAGE 3] Claude single-pass: risk={risk:.3f} accepted={accepted}")
         return proposed, audit_trail
 
-    # Ollama path: full 3-iteration loop with risk feedback
-    # Seed context with Stage 5 feedback if present (Round 2 of decision loop)
-    if stage5_feedback:
-        current = (
-            f"{intent}\n\nPREVIOUS IMPACT ASSESSMENT REJECTED THIS CONFIG.\n"
-            "Generate a SAFER config that avoids:\n" +
-            "\n".join(f"• {c}" for c in stage5_feedback)
-        )
-    else:
-        current = intent
-
+    # Ollama path: full 3-iteration loop (no token cost concern)
+    current = intent
     for i in range(1, max_iter + 1):
         logs.append(f"[STAGE 3] Iteration {i}/{max_iter}")
         system_prompt = (
@@ -1748,8 +1694,7 @@ def _build_dynamic_device_context(intent: str, raw: dict, topology: dict,
 
 def stage_llm_decision(intent, healed_config, raw, topology, validation,
                         audit_trail, provider, logs,
-                        agent_risk_indicators=None, agent_results=None,
-                        round_num=1):
+                        agent_risk_indicators=None, agent_results=None):
     """
     STAGE 5: Fully dynamic, protocol-agnostic LLM-driven change impact decision.
 
@@ -1829,27 +1774,14 @@ CORE PRINCIPLES:
         "critical_risk_count": len(crit_risks),
         "warning_risk_count": len(warn_risks),
         "all_risk_indicators": all_risks[:15],
-        # Stage 3 healing audit — LLM can see which configs were tried and their risk scores
-        "healing_audit_trail": [
-            {"iteration": a["iteration"], "risk_score": a["risk_score"], "accepted": a["accepted"]}
-            for a in (audit_trail or [])
-        ],
-        "decision_round": round_num,  # Which round of the Stage 3↔5 feedback loop
     }, indent=2, default=str)
 
-    # Truncate to Claude-equivalent budget regardless of provider
-    # (Stage 5 always targets Claude quality; Ollama fallback gets full context too)
+    # Truncate if needed to fit token budget
     if len(device_ctx_json) > 12000:
         device_ctx_json = device_ctx_json[:12000] + "\n... [truncated for token budget]"
 
-    round_ctx = (
-        f"\n⚠ ROUND {round_num}/2 — Previous config was assessed as NO-GO. "
-        f"This is a refined, safer config. Re-evaluate with the same rigour — "
-        f"only approve if this version genuinely resolves the prior blocking concerns.\n"
-        if round_num > 1 else ""
-    )
+    prompt = f"""NETWORK CHANGE IMPACT ASSESSMENT — CAB EXPERT REVIEW
 
-    prompt = f"""NETWORK CHANGE IMPACT ASSESSMENT — CAB EXPERT REVIEW{round_ctx}
 DATA SOURCE: PyATS+Genie structured JSON collected via MCP (Netmiko SSH + pyATS Telnet)
 All device state data below was collected live from the device or from saved Genie snapshots.
 You are the decision engine — no protocol-specific rules override you.
@@ -1893,76 +1825,8 @@ ROLLBACK:
 2. [verify recovery — cite specific session/neighbor IDs to check]
 REASONING: [3 sentences citing specific data: neighbor states, route counts, session states from the Genie data above. Explain WHY the verdict is GO/NO-GO based on actual protocol state]"""
 
-    # ── Pass 1: Initial assessment ────────────────────────────────────────────
     response = call_ai(prompt, provider, system=ccie_system)
-    logs.append(f"[STAGE 5] Initial assessment complete ({len(response)} chars)")
-
-    # ── Pass 2: Self-Critique (LLM verifies its own decision against Genie facts)
-    # This is the "feedback from LLM" dynamic loop: the model checks its own output
-    # for hallucinations, inconsistent risk/verdict, and uncited Genie data.
-    _has_fields = ('DECISION:' in response and 'RISK_SCORE:' in response
-                   and 'REASONING:' in response)
-    _is_consistent = True
-    if _has_fields:
-        _verdict_line = next((l for l in response.split('\n') if 'DECISION:' in l), '')
-        _score_line   = next((l for l in response.split('\n') if 'RISK_SCORE:' in l), '')
-        _score_m      = re.search(r'(\d+(?:\.\d+)?)', _score_line)
-        _score_num    = float(_score_m.group(1)) if _score_m else 5.0
-        _is_nogo      = 'NO-GO' in _verdict_line.upper().replace('**', '')
-        # GO should score ≤6, NO-GO should score ≥4 (overlap intentional)
-        _is_consistent = (not _is_nogo and _score_num <= 6) or (_is_nogo and _score_num >= 4)
-
-    # Always critique for Claude (fast); for Ollama only if output looks wrong
-    _do_critique = provider == 'claude' or not _has_fields or not _is_consistent
-    if _do_critique:
-        logs.append(f"[STAGE 5] Self-critique pass "
-                    f"(fields_ok={_has_fields}, consistent={_is_consistent}, provider={provider})...")
-        fact_sheet = json.dumps({
-            "ospf_active_neighbors": [
-                {"id": n["id"], "state": n["state"], "interface": n.get("interface")}
-                for n in ctx["ospf_active_neighbors"][:5]
-            ],
-            "bgp_established": [
-                {"neighbor": b["neighbor"], "state": b.get("state"),
-                 "remote_as": b.get("remote_as")}
-                for b in ctx["bgp_established"][:5]
-            ],
-            "up_interfaces": [
-                {"name": i["name"], "ip": i.get("ip")}
-                for i in ctx.get("up_interfaces", [])[:8]
-            ],
-            "total_routes":    ctx["total_routes"],
-            "route_summary":   ctx["route_summary"],
-            "ospf_processes":  ctx.get("ospf_processes", []),
-            "offline_mode":    ctx.get("offline_mode", False),
-        }, indent=2)
-        critique_prompt = f"""You produced this network change assessment:
-
-{response[:2500]}
-
-Now VERIFY it against these ACTUAL Genie-collected device facts:
-{fact_sheet}
-
-Check for THESE specific errors:
-1. Neighbor IPs in BLAST_RADIUS — are they present in the actual facts above?
-2. RISK_SCORE vs DECISION: GO=1-5, PROCEED WITH CAUTION=4-7, NO-GO=6-10
-3. ROLLBACK commands — do they use real process IDs and interface names from facts?
-4. Protocol claims — is the cited state (FULL/Established/up) confirmed in the data?
-5. REASONING — does it cite actual numbers (route count, neighbor count) from facts?
-
-If the assessment is fully accurate → reproduce it UNCHANGED.
-If corrections are needed → output the corrected version in the EXACT same format.
-Output ONLY the assessment. No preamble, no commentary."""
-        refined = call_ai(critique_prompt, provider, system=ccie_system)
-        if 'DECISION:' in refined and 'RISK_SCORE:' in refined and len(refined) > 300:
-            response = refined
-            logs.append(f"[STAGE 5] Self-critique refined decision ({len(response)} chars)")
-        else:
-            logs.append("[STAGE 5] Self-critique: no improvement — keeping initial response")
-    else:
-        logs.append("[STAGE 5] Self-critique skipped (Ollama fast-path: fields present + consistent)")
-
-    logs.append(f"[STAGE 5] Final decision ready ({len(response)} chars)")
+    logs.append(f"[STAGE 5] LLM decision complete ({len(response)} chars)")
 
     # Step 5: Compute blast_radius dynamically from Genie data
     # All affected entities come from real device data — no hardcoded protocol assumptions
@@ -2367,12 +2231,9 @@ class MCPExecutionEngine:
         p = self.port
 
         # ── Netmiko SSH (primary execution channel) ──────────────────────────
-        _p_key = str(p)
-        if str(p) in _TELNET_ONLY_PORTS:
-            self.logs.append(f"[MCP:build_testbed] SSH skipped — port {p} is Telnet-only (cached).")
-        elif NETMIKO_AVAILABLE and channel in ("ssh", "all"):
+        if NETMIKO_AVAILABLE and channel in ("ssh", "all"):
             try:
-                existing = NETMIKO_SESSIONS.get(_p_key)
+                existing = NETMIKO_SESSIONS.get(str(p))
                 if existing:
                     try:
                         existing.send_command("", read_timeout=5)
@@ -2381,7 +2242,7 @@ class MCPExecutionEngine:
                         result["channels"].append("ssh")
                         self.logs.append(f"[MCP:build_testbed] SSH: reused session port={p}")
                     except Exception:
-                        NETMIKO_SESSIONS.pop(_p_key, None)
+                        NETMIKO_SESSIONS.pop(str(p), None)
 
                 if not self._ssh_connected:
                     nm = ConnectHandler(
@@ -2390,22 +2251,16 @@ class MCPExecutionEngine:
                         port=p,
                         username=GNS3_USERNAME,
                         password=GNS3_PASSWORD,
-                        timeout=10,
-                        banner_timeout=5,   # fast-fail if port speaks Telnet (0xff IAC)
+                        timeout=30,
                         session_log=None,
                     )
                     self._netmiko = nm
-                    NETMIKO_SESSIONS[_p_key] = nm
+                    NETMIKO_SESSIONS[str(p)] = nm
                     self._ssh_connected = True
                     result["channels"].append("ssh")
                     self.logs.append(f"[MCP:build_testbed] SSH connected via Netmiko port={p}")
             except Exception as e:
-                err_str = str(e)
-                if '0xff' in err_str or 'banner' in err_str.lower():
-                    _TELNET_ONLY_PORTS.add(_p_key)   # cache: skip SSH next time
-                    self.logs.append(f"[MCP:build_testbed] Port {p} speaks Telnet — SSH skipped in future.")
-                else:
-                    self.logs.append(f"[MCP:build_testbed] SSH unavailable: {err_str[:80]}")
+                self.logs.append(f"[MCP:build_testbed] SSH unavailable: {str(e)[:80]}")
 
         # ── pyATS Telnet (Genie Learn/Parse channel) ──────────────────────────
         if PYATS_AVAILABLE and channel in ("telnet", "all"):
@@ -3511,9 +3366,13 @@ def orchestrate():
             local_node = topology.get("nodes", [{}])[0].get("id", "router") if topology.get("nodes") else "router"
             physical_topology = build_topology(inventory, raw_twin, local_node, logs)
 
-        # ── Domain Expert Agent analysis via MCP ─────────────────────────────
-        # Run agents ONCE before the decision loop (they collect live device data
-        # which doesn't change between rounds — no need to re-run per round)
+        # Stage 3-5 always run with Claude
+        healed_config, audit_trail = stage_recursive_healing(intent, topology, critical_nodes, pipeline_provider, logs)
+        validation = stage_variable_validation(healed_config, raw_twin, topology, logs)
+
+        # ── Domain Expert Agent analysis via MCP (spec §3) ─────────────────
+        # Agents call MCP tools (learn_feature_state, run_show_and_parse)
+        # not raw inventory data — proper MCP chain even in analyze pipeline
         _mcp_for_analyze = MCPExecutionEngine(port, logs)
         _mcp_for_analyze.build_testbed(channel="all")
         selected_agents_for_analyze = _select_agents_for_intent(intent)
@@ -3526,67 +3385,13 @@ def orchestrate():
         try: _mcp_for_analyze.disconnect()
         except: pass
 
-        # ── Dynamic Decision Loop: Stage 3 ↔ Stage 5 (closed feedback loop) ──────
-        # Round 1: Generate config → Stage 5 assesses → if NO-GO, extract reasons
-        # Round 2: Stage 3 re-generates safer config using Stage 5 reasons → Stage 5 re-assesses
-        #
-        # This is the "dynamically learning based on LLM feedback" architecture:
-        # the LLM's own NO-GO verdict + reasons feed back as constraints for healing.
-        #
-        # Claude: 2 rounds (fast API calls allow it)
-        # Ollama: 1 round (Stage 3 already has its own 3-iteration internal loop;
-        #         adding outer loop would exceed 10-min timeout for local models)
-        max_rounds = 2 if pipeline_provider == 'claude' else 1
-        stage5_feedback = []   # NO-GO reasons from Stage 5 → constraints for Stage 3
-        healed_config, audit_trail, validation, decision_result = None, [], {}, None
-
-        for _round in range(1, max_rounds + 1):
-            logs.append(
-                f"[DECISION LOOP] Round {_round}/{max_rounds}" +
-                (f" — incorporating {len(stage5_feedback)} Stage 5 constraints" if stage5_feedback else "")
-            )
-
-            # Stage 3: Generate (or re-generate with Stage 5 feedback)
-            healed_config, audit_trail = stage_recursive_healing(
-                intent, topology, critical_nodes, pipeline_provider, logs,
-                stage5_feedback=stage5_feedback,
-            )
-            # Stage 4: Validate against live device state
-            validation = stage_variable_validation(healed_config, raw_twin, topology, logs)
-
-            # Stage 5: LLM impact assessment (Pass 1 initial + Pass 2 self-critique)
-            decision_result = stage_llm_decision(
-                intent, healed_config, raw_twin, topology, validation,
-                audit_trail, pipeline_provider, logs,
-                agent_risk_indicators=all_risk_indicators,
-                agent_results=agent_results,
-                round_num=_round,
-            )
-
-            # Extract verdict for loop control
-            _verdict = ''
-            for _dl in decision_result["raw"].replace('**', '').split('\n'):
-                if _dl.strip().startswith('DECISION:'):
-                    _verdict = _dl.split(':', 1)[-1].strip().upper()
-                    break
-            logs.append(f"[DECISION LOOP] Round {_round}: verdict='{_verdict}'")
-
-            if _verdict in ('GO', 'PROCEED WITH CAUTION') or _round >= max_rounds:
-                break  # Accepted verdict or exhausted rounds — use this result
-
-            # Extract Stage 5 NO-GO blocking reasons as feedback for Stage 3 Round 2
-            stage5_feedback = []
-            for _dl in decision_result["raw"].replace('**', '').split('\n'):
-                _ls = _dl.strip()
-                if _ls and any(k in _ls.upper() for k in
-                               ('IMPACTED', 'BLOCKED', 'CRITICAL', 'DISRUPT', 'NO-GO', 'AT RISK')):
-                    stage5_feedback.append(_ls[:120])
-            stage5_feedback = stage5_feedback[:6]
-
-            if not stage5_feedback:
-                logs.append("[DECISION LOOP] No actionable Stage 5 feedback — stopping loop.")
-                break
-            logs.append(f"[DECISION LOOP] Feeding {len(stage5_feedback)} NO-GO reasons to Stage 3 Round 2...")
+        # Pass agent risk findings into decision stage for correlated CCIE analysis
+        decision_result = stage_llm_decision(
+            intent, healed_config, raw_twin, topology, validation,
+            audit_trail, pipeline_provider, logs,
+            agent_risk_indicators=all_risk_indicators,
+            agent_results=agent_results,
+        )
 
         logs.append("[DONE] All stages complete.")
 
