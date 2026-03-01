@@ -599,8 +599,8 @@ def extract_inventory(raw, logs):
     routes = (raw.get("routing", {}).get("vrf", {}).get("default", {})
                  .get("address_family", {}).get("ipv4", {}).get("routes", {}))
 
-    # OSPF
-    ospf_rx, ospf_adv, ospf_nbrs = [], [], []
+    # ── OSPF ──────────────────────────────────────────────────────────────────
+    ospf_rx, ospf_nbrs = [], []
 
     for pfx, r in routes.items():
         proto = r.get("source_protocol", "")
@@ -609,27 +609,65 @@ def extract_inventory(raw, logs):
         if proto == "ospf":
             ospf_rx.append({"prefix": pfx, "next_hop": nh,
                             "metric": r.get("metric", ""), "age": r.get("last_updated", "")})
-        elif proto == "connected":
-            ospf_adv.append(pfx)
         elif proto == "static":
             inv["protocols"]["static"].append({"prefix": pfx, "next_hop": nh})
 
-    # Walk OSPF data — use multi-source extractor for reliability
+    # ── Build uptime lookup from Genie 'show ip ospf neighbor detail' ────────
+    # This is the only source that has per-neighbor uptime ("Neighbor is up for HH:MM:SS")
+    ospf_uptime_lookup = {}   # {neighbor_id: uptime_str}
+    ospf_area_lookup   = {}   # {neighbor_id: area_str}
+    ospf_det = raw.get("ospf_neighbors_detail", {})
+    if isinstance(ospf_det, dict):
+        # IOS-XE shape: vrf → interfaces → neighbors
+        for vrf_n, vrf_d in ospf_det.get("vrf", {}).items():
+            for iface_name, iface_d in vrf_d.get("interfaces", {}).items():
+                iface_area = str(iface_d.get("area", ""))
+                for nbr_id, nbr_d in iface_d.get("neighbors", {}).items():
+                    ut = nbr_d.get("up_time", nbr_d.get("uptime", ""))
+                    ar = str(nbr_d.get("area", iface_area))
+                    if ut: ospf_uptime_lookup[nbr_id] = ut
+                    if ar: ospf_area_lookup[nbr_id]   = ar
+        # Classic IOS shape: interfaces at top level (no vrf wrapper)
+        for iface_name, iface_d in ospf_det.get("interfaces", {}).items():
+            iface_area = str(iface_d.get("area", ""))
+            for nbr_id, nbr_d in iface_d.get("neighbors", {}).items():
+                ut = nbr_d.get("up_time", nbr_d.get("uptime", ""))
+                ar = str(nbr_d.get("area", iface_area))
+                if ut and nbr_id not in ospf_uptime_lookup:
+                    ospf_uptime_lookup[nbr_id] = ut
+                if ar and nbr_id not in ospf_area_lookup:
+                    ospf_area_lookup[nbr_id]   = ar
+
+    # ── Build area lookup from Genie ospf learn (instance→vrf→area→iface→nbr) ─
+    # This is the most reliable area source since area is in the iteration key
+    for inst_name, inst in raw.get("ospf", {}).items():
+        if not isinstance(inst, dict): continue
+        for vrf_n, vrf_d in inst.get("vrf", {}).items():
+            for area_id, area_d in vrf_d.get("area", {}).items():
+                for iface_name, iface_d in area_d.get("interface", {}).items():
+                    for nbr_id in iface_d.get("neighbor", {}).keys():
+                        if nbr_id not in ospf_area_lookup or not ospf_area_lookup[nbr_id]:
+                            ospf_area_lookup[nbr_id] = str(area_id)
+
+    # ── Walk OSPF neighbors (multi-source) and enrich with uptime + area ─────
     ospf_nbrs_all = _extract_ospf_neighbors_all_sources(raw)
     for nbr_id, nbr_d in ospf_nbrs_all.items():
+        # Prefer supplement sources for uptime and area (raw CLI doesn't carry them)
+        uptime = (nbr_d.get("uptime") or "").strip() or ospf_uptime_lookup.get(nbr_id, "")
+        area   = (nbr_d.get("area")   or "").strip() or ospf_area_lookup.get(nbr_id, "")
         ospf_nbrs.append({
             "neighbor_id": nbr_id,
             "state":       nbr_d.get("state", ""),
             "interface":   nbr_d.get("interface", ""),
-            "area":        nbr_d.get("area", ""),
+            "area":        area,
             "address":     nbr_d.get("address", ""),
             "dead_timer":  nbr_d.get("dead_timer", ""),
-            "uptime":      nbr_d.get("uptime", ""),
+            "uptime":      uptime,
             "priority":    nbr_d.get("priority", ""),
             "role":        nbr_d.get("role", ""),
         })
 
-    # De-dup OSPF neighbors
+    # De-dup OSPF neighbors by neighbor_id|interface
     seen_nbr = set()
     ospf_nbrs_dedup = []
     for n in ospf_nbrs:
@@ -638,85 +676,172 @@ def extract_inventory(raw, logs):
             seen_nbr.add(key)
             ospf_nbrs_dedup.append(n)
 
+    # ── OSPF locally advertised: parse running-config network statements ──────
+    # These are the prefixes this device originates into OSPF (not just connected routes).
+    # 'router ospf X / network A.B.C.D W.X.Y.Z area N' → what peers learn from this router.
+    ospf_adv = []
+    rc = raw.get("running_config", "")
+    if isinstance(rc, str):
+        in_ospf_block = False
+        for line in rc.split("\n"):
+            ls = line.strip()
+            if re.match(r'^router\s+ospf\s+\d+', ls, re.I):
+                in_ospf_block = True
+            elif in_ospf_block and ls.startswith("!"):
+                in_ospf_block = False
+            elif in_ospf_block and ls and not ls.startswith(" ") and not ls.startswith("router"):
+                in_ospf_block = False
+            elif in_ospf_block:
+                # network A.B.C.D W.X.Y.Z area N
+                m = re.match(
+                    r'network\s+(\d+\.\d+\.\d+\.\d+)\s+(\d+\.\d+\.\d+\.\d+)\s+area\s+(\S+)',
+                    ls, re.I)
+                if m:
+                    ospf_adv.append(f"{m.group(1)} {m.group(2)} area {m.group(3)}")
+                # redistribute connected/static/bgp subroutine/etc.
+                elif ls.lower().startswith("redistribute "):
+                    ospf_adv.append(ls)
+    # Fallback: connected prefixes (when running config unavailable)
+    if not ospf_adv:
+        for pfx, r in routes.items():
+            if r.get("source_protocol") == "connected":
+                ospf_adv.append(pfx)
+
     inv["protocols"]["ospf"] = {
-        "enabled": len(ospf_nbrs_dedup) > 0 or len(ospf_rx) > 0,
-        "neighbors": ospf_nbrs_dedup,
-        "routes_received": ospf_rx,
+        "enabled":          len(ospf_nbrs_dedup) > 0 or len(ospf_rx) > 0,
+        "neighbors":        ospf_nbrs_dedup,
+        "routes_received":  ospf_rx,
         "routes_advertised": ospf_adv,
-        "route_count_rx": len(ospf_rx),
+        "route_count_rx":   len(ospf_rx),
     }
 
-    # BGP — robust multi-shape parsing
-    bgp_nbrs, bgp_rx, bgp_adv = [], [], []
+    # ── BGP — dict-based merge of all shapes so no field is lost ─────────────
+    # bgp_data is keyed by neighbor IP; shapes are applied in priority order
+    # and missing fields are filled in from later shapes (merge, not replace).
+    bgp_data = {}   # {nbr_ip: {neighbor, vrf, remote_as, state, pfx_rx, pfx_tx, uptime, ...}}
+    bgp_adv  = []
 
-    # Shape 1: Genie bgp learn (instance → vrf → neighbor)
+    def _bgp_af_pfx(nbr_d):
+        """Extract (pfx_rx, pfx_tx) trying all common address-family key names."""
+        for af_key in ("ipv4 unicast", "ipv4 Unicast", "IPv4 Unicast",
+                       "ipv4", "vpnv4 unicast", "ipv6 unicast"):
+            af = nbr_d.get("address_family", {}).get(af_key, {})
+            if af:
+                rx = str(af.get("accepted_prefix_count",
+                                af.get("prefix_count", "")) or "")
+                tx = str(af.get("sent_prefix_count",
+                                af.get("advertised_prefix_count", "")) or "")
+                return rx, tx
+        return "", ""
+
+    def _bgp_merge(existing, updates):
+        """Fill empty fields in existing dict from updates dict."""
+        for k, v in updates.items():
+            if not existing.get(k) and v not in (None, ""):
+                existing[k] = v
+
+    # Shape 1: Genie bgp learn (instance → vrf → neighbor) ───────────────────
     bgp_learn = raw.get("bgp", {})
     for inst_name, inst in bgp_learn.get("instance", {}).items():
         for vrf_n, vrf_d in inst.get("vrf", {}).items():
             for nbr_ip, nbr_d in vrf_d.get("neighbor", {}).items():
-                bgp_nbrs.append({
-                    "neighbor": nbr_ip,
-                    "vrf": vrf_n,
-                    "remote_as": nbr_d.get("remote_as", nbr_d.get("bgp_neighbor_counters", {}).get("remote_as", "")),
-                    "state": nbr_d.get("session_state", nbr_d.get("bgp_state", "")),
-                    "prefixes_received": nbr_d.get("address_family", {}).get("ipv4 unicast", {}).get("accepted_prefix_count", ""),
-                    "prefixes_sent": nbr_d.get("address_family", {}).get("ipv4 unicast", {}).get("sent_prefix_count", ""),
-                    "uptime": nbr_d.get("up_time", nbr_d.get("bgp_session_transport", {}).get("connection", {}).get("last_reset", "")),
-                    "description": nbr_d.get("description", ""),
-                    "hold_time": nbr_d.get("hold_time", ""),
-                    "keepalive": nbr_d.get("keepalive_interval", ""),
-                })
-            # BGP advertised prefixes
+                pfx_rx, pfx_tx = _bgp_af_pfx(nbr_d)
+                state = str(nbr_d.get("session_state",
+                            nbr_d.get("bgp_state",
+                            nbr_d.get("state", ""))) or "")
+                uptime = str(nbr_d.get("up_time", "") or "")
+                remote_as = str(nbr_d.get("remote_as", "") or "")
+                bgp_data[nbr_ip] = {
+                    "neighbor":          nbr_ip,
+                    "vrf":               vrf_n,
+                    "remote_as":         remote_as,
+                    "state":             state,
+                    "prefixes_received": pfx_rx,
+                    "prefixes_sent":     pfx_tx,
+                    "uptime":            uptime,
+                    "description":       str(nbr_d.get("description", "") or ""),
+                    "hold_time":         str(nbr_d.get("hold_time", "") or ""),
+                    "keepalive":         str(nbr_d.get("keepalive_interval", "") or ""),
+                }
+            # BGP advertised prefixes from learn
             for af_name, af_d in vrf_d.get("address_family", {}).items():
                 for pfx in af_d.get("prefixes", {}).keys():
                     bgp_adv.append(pfx)
 
-    # Shape 2: bgp_summary parsed output (vrf → neighbor)
+    # Shape 2: bgp_summary ('show ip bgp summary') ────────────────────────────
+    # state_pfxrcd: numeric → peer is Established + value = pfx count received
+    #               string  → peer NOT established + value = state (Active/Idle/Connect)
     bgp_sum = raw.get("bgp_summary", {})
     for vrf_name, vrf_d in bgp_sum.get("vrf", {}).items():
         for nbr_ip, nbr_d in vrf_d.get("neighbor", {}).items():
-            if not any(b["neighbor"] == nbr_ip for b in bgp_nbrs):
-                bgp_nbrs.append({
-                    "neighbor": nbr_ip, "vrf": vrf_name,
-                    "remote_as": nbr_d.get("remote_as", ""),
-                    "state": nbr_d.get("session_state", nbr_d.get("state_pfxrcd", "")),
-                    "prefixes_received": nbr_d.get("prefixes_received", nbr_d.get("msg_rcvd", "")),
-                    "prefixes_sent": nbr_d.get("msg_sent", ""),
-                    "uptime": nbr_d.get("up_down", ""),
-                    "description": "", "hold_time": "", "keepalive": "",
-                })
+            spfx     = str(nbr_d.get("state_pfxrcd", "") or "")
+            sess_st  = str(nbr_d.get("session_state", "") or "")
+            up_down  = str(nbr_d.get("up_down", "") or "")
+            ras      = str(nbr_d.get("remote_as", "") or "")
 
-    # Shape 3: bgp_neighbors_detail parsed
+            if sess_st:
+                state2  = sess_st
+                pfx_rx2 = spfx if spfx.isdigit() else ""
+            elif spfx.isdigit():
+                state2  = "Established"
+                pfx_rx2 = spfx
+            else:
+                state2  = spfx          # "Active", "Idle", "Connect", etc.
+                pfx_rx2 = ""
+
+            s2 = {
+                "neighbor": nbr_ip, "vrf": vrf_name,
+                "remote_as": ras, "state": state2,
+                "prefixes_received": pfx_rx2, "prefixes_sent": "",
+                "uptime": up_down, "description": "", "hold_time": "", "keepalive": "",
+            }
+            if nbr_ip in bgp_data:
+                _bgp_merge(bgp_data[nbr_ip], s2)
+            else:
+                bgp_data[nbr_ip] = s2
+
+    # Shape 3: bgp_neighbors_detail ('show ip bgp neighbors') ─────────────────
     bgp_nbr_detail = raw.get("bgp_neighbors_detail", {})
     if isinstance(bgp_nbr_detail, dict):
         for vrf_n, vrf_d in bgp_nbr_detail.get("vrf", {}).items():
             for nbr_ip, nbr_d in vrf_d.get("neighbor", {}).items():
-                if not any(b["neighbor"] == nbr_ip for b in bgp_nbrs):
-                    bgp_nbrs.append({
-                        "neighbor": nbr_ip, "vrf": vrf_n,
-                        "remote_as": nbr_d.get("remote_as", ""),
-                        "state": nbr_d.get("session_state", ""),
-                        "prefixes_received": nbr_d.get("address_family", {}).get("ipv4 unicast", {}).get("accepted_prefix_count", ""),
-                        "prefixes_sent": "",
-                        "uptime": nbr_d.get("up_time", ""),
-                        "description": nbr_d.get("description", ""),
-                        "hold_time": nbr_d.get("hold_time", ""),
-                        "keepalive": nbr_d.get("keepalive_interval", ""),
-                    })
+                pfx_rx3, pfx_tx3 = _bgp_af_pfx(nbr_d)
+                # bgp_neighbor_counters is another location for prefix counts
+                if not pfx_rx3:
+                    pfx_rx3 = str(nbr_d.get("bgp_neighbor_counters", {})
+                                      .get("prefixes_received", "") or "")
+                s3 = {
+                    "neighbor": nbr_ip, "vrf": vrf_n,
+                    "remote_as":         str(nbr_d.get("remote_as", "") or ""),
+                    "state":             str(nbr_d.get("session_state",
+                                             nbr_d.get("bgp_state", "")) or ""),
+                    "prefixes_received": pfx_rx3,
+                    "prefixes_sent":     pfx_tx3,
+                    "uptime":            str(nbr_d.get("up_time", "") or ""),
+                    "description":       str(nbr_d.get("description", "") or ""),
+                    "hold_time":         str(nbr_d.get("hold_time", "") or ""),
+                    "keepalive":         str(nbr_d.get("keepalive_interval", "") or ""),
+                }
+                if nbr_ip in bgp_data:
+                    _bgp_merge(bgp_data[nbr_ip], s3)
+                else:
+                    bgp_data[nbr_ip] = s3
 
-    # BGP routes from routing table
+    # BGP routes received from routing table
+    bgp_rx = []
     for pfx, r in routes.items():
         if r.get("source_protocol") == "bgp":
             nh_list = r.get("next_hop", {}).get("next_hop_list", {})
             nh = list(nh_list.values())[0].get("next_hop", "") if nh_list else ""
             bgp_rx.append({"prefix": pfx, "next_hop": nh})
 
+    bgp_nbrs = list(bgp_data.values())
     inv["protocols"]["bgp"] = {
-        "enabled": len(bgp_nbrs) > 0,
-        "neighbors": bgp_nbrs,
-        "routes_received": bgp_rx,
+        "enabled":           len(bgp_nbrs) > 0,
+        "neighbors":         bgp_nbrs,
+        "routes_received":   bgp_rx,
         "routes_advertised": list(dict.fromkeys(bgp_adv)),
-        "neighbor_count": len(bgp_nbrs),
+        "neighbor_count":    len(bgp_nbrs),
     }
 
     # ACL — Genie acl learn
