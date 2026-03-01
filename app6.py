@@ -392,6 +392,14 @@ def collect_device(port, logs):
             except Exception as e:
                 logs.append(f"[COLLECT] OSPF neighbor detail skip: {str(e)[:60]}")
 
+        # OSPF neighbor detail — RAW text (most reliable for uptime + area on classic IOS)
+        # Genie schema parsing often fails on GNS3 classic IOS; raw text never fails.
+        try:
+            raw['ospf_neighbors_detail_raw'] = dev.execute('show ip ospf neighbor detail')
+            logs.append(f"[COLLECT] OSPF neighbor detail raw ({len(raw['ospf_neighbors_detail_raw'])} chars).")
+        except Exception:
+            pass
+
         # OSPF database
         for cmd in ['show ip ospf database router', 'show ip ospf database']:
             try:
@@ -401,11 +409,21 @@ def collect_device(port, logs):
             except Exception:
                 pass
 
-        # BGP summary
+        # BGP summary — Genie parsed
         for cmd in ['show ip bgp summary', 'show bgp all summary']:
             try:
                 raw['bgp_summary'] = dev.parse(cmd)
-                logs.append("[COLLECT] BGP summary.")
+                logs.append("[COLLECT] BGP summary (Genie parsed).")
+                break
+            except Exception:
+                pass
+
+        # BGP summary — RAW text (most reliable for remote-as, state, pfx, uptime)
+        # 'show ip bgp summary' table is simple and always parseable from raw text.
+        for cmd in ['show ip bgp summary', 'show bgp all summary']:
+            try:
+                raw['bgp_summary_raw'] = dev.execute(cmd)
+                logs.append(f"[COLLECT] BGP summary raw ({len(raw['bgp_summary_raw'])} chars).")
                 break
             except Exception:
                 pass
@@ -649,6 +667,32 @@ def extract_inventory(raw, logs):
                         if nbr_id not in ospf_area_lookup or not ospf_area_lookup[nbr_id]:
                             ospf_area_lookup[nbr_id] = str(area_id)
 
+    # ── Fallback: parse raw text of 'show ip ospf neighbor detail' ───────────
+    # This is the definitive fallback for classic IOS / GNS3 where Genie schema
+    # parsing fails. Raw text always has:
+    #   "Neighbor 9.9.0.3, interface address 9.9.23.3"
+    #   "    In the area 0 via interface FastEthernet0/0"
+    #   "    Neighbor is up for 00:45:23"
+    ospf_det_raw = raw.get("ospf_neighbors_detail_raw", "")
+    if isinstance(ospf_det_raw, str) and ospf_det_raw.strip():
+        cur_nbr = None
+        for line in ospf_det_raw.splitlines():
+            # Match neighbor header: "Neighbor 9.9.0.3, interface address 9.9.23.3"
+            m = re.match(r'\s*Neighbor\s+(\d+\.\d+\.\d+\.\d+)', line)
+            if m:
+                cur_nbr = m.group(1)
+            elif cur_nbr:
+                # Area: "    In the area 0 via interface FastEthernet0/0"
+                if not ospf_area_lookup.get(cur_nbr):
+                    m_a = re.search(r'[Ii]n the area\s+(\S+)', line)
+                    if m_a:
+                        ospf_area_lookup[cur_nbr] = m_a.group(1).rstrip(',.')
+                # Uptime: "    Neighbor is up for 00:45:23"
+                if not ospf_uptime_lookup.get(cur_nbr):
+                    m_u = re.search(r'[Nn]eighbor is up for\s+(\S+)', line)
+                    if m_u:
+                        ospf_uptime_lookup[cur_nbr] = m_u.group(1)
+
     # ── Walk OSPF neighbors (multi-source) and enrich with uptime + area ─────
     ospf_nbrs_all = _extract_ospf_neighbors_all_sources(raw)
     for nbr_id, nbr_d in ospf_nbrs_all.items():
@@ -803,29 +847,92 @@ def extract_inventory(raw, logs):
     # Shape 3: bgp_neighbors_detail ('show ip bgp neighbors') ─────────────────
     bgp_nbr_detail = raw.get("bgp_neighbors_detail", {})
     if isinstance(bgp_nbr_detail, dict):
+        def _parse_bgp_nbr_d(nbr_ip, nbr_d, vrf_n):
+            pfx_rx3, pfx_tx3 = _bgp_af_pfx(nbr_d)
+            if not pfx_rx3:
+                pfx_rx3 = str(nbr_d.get("bgp_neighbor_counters", {})
+                                  .get("prefixes_received", "") or "")
+            s3 = {
+                "neighbor": nbr_ip, "vrf": vrf_n,
+                "remote_as":         str(nbr_d.get("remote_as", "") or ""),
+                "state":             str(nbr_d.get("session_state",
+                                         nbr_d.get("bgp_state", "")) or ""),
+                "prefixes_received": pfx_rx3,
+                "prefixes_sent":     pfx_tx3,
+                "uptime":            str(nbr_d.get("up_time", "") or ""),
+                "description":       str(nbr_d.get("description", "") or ""),
+                "hold_time":         str(nbr_d.get("hold_time", "") or ""),
+                "keepalive":         str(nbr_d.get("keepalive_interval", "") or ""),
+            }
+            if nbr_ip in bgp_data:
+                _bgp_merge(bgp_data[nbr_ip], s3)
+            else:
+                bgp_data[nbr_ip] = s3
+
+        # Shape 3a: with VRF wrapper (IOS-XE / newer IOS)
         for vrf_n, vrf_d in bgp_nbr_detail.get("vrf", {}).items():
             for nbr_ip, nbr_d in vrf_d.get("neighbor", {}).items():
-                pfx_rx3, pfx_tx3 = _bgp_af_pfx(nbr_d)
-                # bgp_neighbor_counters is another location for prefix counts
-                if not pfx_rx3:
-                    pfx_rx3 = str(nbr_d.get("bgp_neighbor_counters", {})
-                                      .get("prefixes_received", "") or "")
-                s3 = {
-                    "neighbor": nbr_ip, "vrf": vrf_n,
-                    "remote_as":         str(nbr_d.get("remote_as", "") or ""),
-                    "state":             str(nbr_d.get("session_state",
-                                             nbr_d.get("bgp_state", "")) or ""),
-                    "prefixes_received": pfx_rx3,
-                    "prefixes_sent":     pfx_tx3,
-                    "uptime":            str(nbr_d.get("up_time", "") or ""),
-                    "description":       str(nbr_d.get("description", "") or ""),
-                    "hold_time":         str(nbr_d.get("hold_time", "") or ""),
-                    "keepalive":         str(nbr_d.get("keepalive_interval", "") or ""),
+                _parse_bgp_nbr_d(nbr_ip, nbr_d, vrf_n)
+        # Shape 3b: without VRF wrapper — neighbour directly at top level (classic IOS)
+        for nbr_ip, nbr_d in bgp_nbr_detail.get("neighbor", {}).items():
+            _parse_bgp_nbr_d(nbr_ip, nbr_d, "default")
+
+    # ── Shape 2b: bgp_summary without VRF wrapper (some classic IOS versions) ─
+    def _parse_bgp_sum_nbr(nbr_ip, nbr_d, vrf_n):
+        spfx    = str(nbr_d.get("state_pfxrcd", "") or "")
+        sess_st = str(nbr_d.get("session_state", "") or "")
+        up_down = str(nbr_d.get("up_down", nbr_d.get("up_time", "")) or "")
+        ras     = str(nbr_d.get("remote_as", "") or "")
+        if sess_st:
+            state2, pfx_rx2 = sess_st, (spfx if spfx.isdigit() else "")
+        elif spfx.isdigit():
+            state2, pfx_rx2 = "Established", spfx
+        else:
+            state2, pfx_rx2 = spfx, ""
+        entry = {
+            "neighbor": nbr_ip, "vrf": vrf_n,
+            "remote_as": ras, "state": state2,
+            "prefixes_received": pfx_rx2, "prefixes_sent": "",
+            "uptime": up_down, "description": "", "hold_time": "", "keepalive": "",
+        }
+        if nbr_ip in bgp_data:
+            _bgp_merge(bgp_data[nbr_ip], entry)
+        else:
+            bgp_data[nbr_ip] = entry
+
+    for nbr_ip, nbr_d in bgp_sum.get("neighbor", {}).items():
+        _parse_bgp_sum_nbr(nbr_ip, nbr_d, "default")
+
+    # ── Shape 4: Raw text parse of 'show ip bgp summary' ─────────────────────
+    # This is the DEFINITIVE fallback — works on any IOS version, always has
+    # remote-as, uptime, state/pfx in a fixed-column table format.
+    # Table: Neighbor V AS MsgRcvd MsgSent TblVer InQ OutQ Up/Down State/PfxRcd
+    bgp_sum_raw = raw.get("bgp_summary_raw", "")
+    if isinstance(bgp_sum_raw, str):
+        for line in bgp_sum_raw.splitlines():
+            m = re.match(
+                r'\s*(\d+\.\d+\.\d+\.\d+)\s+'   # Neighbor IP
+                r'\d+\s+'                          # BGP Version (4)
+                r'(\d+)\s+'                        # AS number
+                r'\d+\s+\d+\s+'                   # MsgRcvd MsgSent
+                r'\d+\s+\d+\s+\d+\s+'            # TblVer InQ OutQ
+                r'(\S+)\s+'                        # Up/Down
+                r'(\S+)',                           # State/PfxRcd
+                line)
+            if m:
+                nbr_ip, ras, updown, spfx = m.group(1), m.group(2), m.group(3), m.group(4)
+                pfx_rx = spfx if spfx.isdigit() else ""
+                state  = "Established" if spfx.isdigit() else spfx
+                s4 = {
+                    "neighbor": nbr_ip, "vrf": "default",
+                    "remote_as": ras, "state": state,
+                    "prefixes_received": pfx_rx, "prefixes_sent": "",
+                    "uptime": updown, "description": "", "hold_time": "", "keepalive": "",
                 }
                 if nbr_ip in bgp_data:
-                    _bgp_merge(bgp_data[nbr_ip], s3)
+                    _bgp_merge(bgp_data[nbr_ip], s4)
                 else:
-                    bgp_data[nbr_ip] = s3
+                    bgp_data[nbr_ip] = s4
 
     # BGP routes received from routing table
     bgp_rx = []
