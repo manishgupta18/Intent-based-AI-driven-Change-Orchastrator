@@ -65,7 +65,7 @@ OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "llama3")
 # Start Batfish Docker on Windows host:
 #   docker run -d --name batfish -p 9997:9997 -p 9996:9996 batfish/batfish
 # Client install: pip install pybatfish pandas
-BATFISH_HOST    = os.environ.get("BATFISH_HOST", "172.26.32.1")  # Windows host IP
+BATFISH_HOST    = os.environ.get("BATFISH_HOST", "localhost")  # Docker on same host
 BATFISH_PORT    = int(os.environ.get("BATFISH_PORT", "9997"))
 BATFISH_NETWORK = os.environ.get("BATFISH_NETWORK", "netbuilder_v6")
 BATFISH_SNAPSHOT_DIR = None   # set at runtime from DATA_DIR (below)
