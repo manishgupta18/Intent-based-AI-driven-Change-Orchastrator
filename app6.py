@@ -24,6 +24,24 @@ try:
 except ImportError:
     NETMIKO_AVAILABLE = False
 
+# ── Batfish (formal network verification) ──────────────────────────────────
+try:
+    from pybatfish.client.session import Session as BatfishSession
+    from pybatfish.datamodel.flow import HeaderConstraints
+    BATFISH_AVAILABLE = True
+    print("[INIT] pybatfish available — Stage 3.5 formal verification enabled.")
+except ImportError:
+    BATFISH_AVAILABLE = False
+    print("[INIT] pybatfish not installed — Stage 3.5 runs in degraded mode.")
+    print("[INIT] Install: pip install pybatfish")
+
+# ── pandas (needed by pybatfish) ───────────────────────────────────────────
+try:
+    import pandas as _pd  # noqa: F401
+    PANDAS_AVAILABLE = True
+except ImportError:
+    PANDAS_AVAILABLE = False
+
 app = Flask(__name__)
 CORS(app)
 
@@ -42,6 +60,15 @@ ANTHROPIC_VERSION     = "2023-06-01"
 
 # ── OLLAMA (On-Demand: discovery, simulate, anomalies, healing, scan) ──────
 OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "llama3")
+
+# ── BATFISH (Formal Network Verification) ──────────────────────────────────
+# Start Batfish Docker on Windows host:
+#   docker run -d --name batfish -p 9997:9997 -p 9996:9996 batfish/batfish
+# Client install: pip install pybatfish pandas
+BATFISH_HOST    = os.environ.get("BATFISH_HOST", "172.26.32.1")  # Windows host IP
+BATFISH_PORT    = int(os.environ.get("BATFISH_PORT", "9997"))
+BATFISH_NETWORK = os.environ.get("BATFISH_NETWORK", "netbuilder_v6")
+BATFISH_SNAPSHOT_DIR = None   # set at runtime from DATA_DIR (below)
 
 # ── ACTIVE PROVIDER for pipeline/chat ─────────────────────────────────────
 def _detect_provider():
@@ -66,6 +93,8 @@ def _resolve_provider(request_provider: str = None) -> str:
 # ── DISK PERSISTENCE ───────────────────────────────────────────────────────
 DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
 os.makedirs(DATA_DIR, exist_ok=True)
+BATFISH_SNAPSHOT_DIR = os.path.join(DATA_DIR, "batfish_snapshots")
+os.makedirs(BATFISH_SNAPSHOT_DIR, exist_ok=True)
 
 def _save_to_disk(key: str, data: dict):
     """Save data as JSON to ./data/<key>.json"""
@@ -1240,6 +1269,41 @@ def _format_ospf_neighbors_for_prompt(nbrs: dict) -> str:
     return header + "\n".join(lines)
 
 
+def _classify_device_type(platform: str, capabilities: str, sys_descr: str = "") -> str:
+    """
+    Classify a neighbour/node as router|switch|ap|server|firewall|unknown.
+    Uses CDP platform, capabilities, and optional SNMP sysDescr.
+    (network-discovery skill: Step 4 — Device Classification)
+    """
+    p = (platform or "").lower()
+    c = (capabilities or "").lower()
+    s = (sys_descr or "").lower()
+
+    if any(x in p for x in ["cisco ios", "7200", "7600", "asr", "isr", "c29", "c39", "c49"]):
+        return "router"
+    if any(x in p for x in ["cat", "c2960", "c3560", "c3750", "c4500", "c6500", "nexus", "n5k", "n7k", "n9k"]):
+        return "switch"
+    if any(x in p for x in ["asa", "ftd", "firepower", "pix"]):
+        return "firewall"
+    if any(x in p for x in ["ap", "air-", "aironet", "wlc", "catalyst ap"]):
+        return "access_point"
+    if "router" in c or "igp" in c:
+        return "router"
+    if "switch" in c or "bridge" in c:
+        return "switch"
+    if "host" in c:
+        return "server"
+    if any(x in s for x in ["cisco ios", "ios-xe", "ios xr"]):
+        return "router"
+    if any(x in s for x in ["junos", "extreme", "arista"]):
+        return "router"
+    if any(x in s for x in ["linux", "windows", "ubuntu", "centos"]):
+        return "server"
+    if "802.11" in s or "wlan" in s:
+        return "access_point"
+    return "unknown"
+
+
 def _find_acl_ifaces(acl_name, iface_data):
     applied = []
     for iname, d in iface_data.items():
@@ -1267,6 +1331,7 @@ def build_topology(inv, raw, local_id, logs):
 
     topo_nodes[local_id] = {
         "id": local_id, "label": local_id, "type": "local",
+        "device_type": "router",
         "platform": "Cisco IOS (local)", "interfaces": [],
     }
 
@@ -1281,8 +1346,11 @@ def build_topology(inv, raw, local_id, logs):
         ip_str   = nbr.get("ip", "")
 
         if dev_id not in topo_nodes:
-            topo_nodes[dev_id] = {"id": dev_id, "label": dev_id, "type": "cdp",
-                                  "platform": platform, "ip": ip_str}
+            topo_nodes[dev_id] = {
+                "id": dev_id, "label": dev_id, "type": "cdp",
+                "device_type": _classify_device_type(platform, nbr.get("capabilities", "")),
+                "platform": platform, "ip": ip_str,
+            }
         # Always add edge — multiple links between same two devices will appear as multiple edges
         topo_edges.append({
             "source": local_id, "target": dev_id,
@@ -1725,6 +1793,457 @@ def stage_variable_validation(healed_config, raw, topology, logs):
             "device_routing_ips": sorted(device_routing_ips)}
 
 
+
+# ══════════════════════════════════════════════════════════════════════════════
+# STAGE 3.5: BATFISH FORMAL NETWORK VERIFICATION
+# ──────────────────────────────────────────────────────────────────────────────
+# Batfish builds a vendor-agnostic dataplane model from device configs and
+# formally answers questions that an LLM cannot:
+#   - Does reachability change between pre/post config?
+#   - Which prefixes are withdrawn/added?
+#   - Does the config parse without errors?
+#   - Are there undefined references (route-maps, prefix-lists, ACLs)?
+#   - What does the routing/forwarding table look like post-change?
+#   - OSPF adjacency model (formal, not live poll)
+#   - BGP peer topology (formal, config-derived)
+#
+# Architecture:
+#   Genie (live state) → running_config strings → Batfish snapshot dir
+#   pre_snapshot (current) + post_snapshot (with healed_config applied)
+#   → differential_reachability, parse_warnings, bgp_routes
+#   → structured findings passed to Stage 5 LLM (never raw device output)
+#
+# Start Batfish: docker run -d --name batfish -p 9997:9997 -p 9996:9996 batfish/batfish
+# Degrades gracefully if Docker not running or pybatfish not installed.
+# ══════════════════════════════════════════════════════════════════════════════
+
+import shutil, tempfile
+
+def _build_batfish_snapshot_dir(
+    snapshot_name: str,
+    running_config: str,
+    hostname: str = "router",
+    extra_configs: dict = None,
+) -> str:
+    """
+    Build a Batfish snapshot directory from running config strings.
+    Batfish expects: <snapshot_dir>/configs/<hostname>.cfg
+    extra_configs: {hostname: config_string} for multi-device snapshots.
+    """
+    snap_dir = os.path.join(BATFISH_SNAPSHOT_DIR, snapshot_name)
+    cfg_dir  = os.path.join(snap_dir, "configs")
+    os.makedirs(cfg_dir, exist_ok=True)
+    with open(os.path.join(cfg_dir, f"{hostname}.cfg"), "w") as f:
+        f.write(running_config or "! empty config\n")
+    for h, cfg in (extra_configs or {}).items():
+        safe_h = re.sub(r'[^\w\-]', '_', h)
+        with open(os.path.join(cfg_dir, f"{safe_h}.cfg"), "w") as f:
+            f.write(cfg or "! empty config\n")
+    return snap_dir
+
+
+def _apply_intent_to_config(running_config: str, healed_config: str) -> str:
+    """
+    Produce a post-change config by applying healed_config lines to running_config.
+    'no <cmd>' lines remove matching lines; positive lines are appended.
+    """
+    if not running_config or not running_config.strip():
+        return healed_config or ""
+    rc_lines = running_config.split("\n")
+    hc_lines = [l for l in (healed_config or "").split("\n")
+                if l.strip() and not l.strip().startswith("!")]
+    result = list(rc_lines)
+    for hline in hc_lines:
+        stripped = hline.strip()
+        if not stripped or stripped.startswith("!"):
+            continue
+        if stripped.lower().startswith("no "):
+            target = stripped[3:].strip().lower()
+            result = [l for l in result
+                      if l.strip().lower() != target
+                      and not l.strip().lower().startswith(target + " ")]
+        else:
+            if not any(l.strip().lower() == stripped.lower() for l in result):
+                result.append(hline)
+    return "\n".join(result)
+
+
+def _extract_hostname_from_config(running_config: str) -> str:
+    m = re.search(r'^hostname\s+(\S+)', running_config or "", re.M | re.I)
+    return m.group(1) if m else "router"
+
+
+def _connect_batfish(logs: list):
+    """Connect to Batfish service. Returns BatfishSession or None."""
+    if not BATFISH_AVAILABLE:
+        logs.append("[STAGE 3.5] pybatfish not installed — skipping formal verification.")
+        return None
+    try:
+        bf = BatfishSession(host=BATFISH_HOST, load_questions=False)
+        bf.set_network(BATFISH_NETWORK)
+        bf.q.load()
+        logs.append(f"[STAGE 3.5] Connected to Batfish at {BATFISH_HOST}:{BATFISH_PORT}")
+        return bf
+    except Exception as e:
+        logs.append(f"[STAGE 3.5] Batfish not reachable ({BATFISH_HOST}:{BATFISH_PORT}): {e}")
+        logs.append("[STAGE 3.5] Start: docker run -d --name batfish -p 9997:9997 -p 9996:9996 batfish/batfish")
+        return None
+
+
+def _run_batfish_snapshot(bf, snap_dir: str, snap_name: str, logs: list) -> bool:
+    try:
+        bf.init_snapshot(snap_dir, name=snap_name, overwrite=True)
+        logs.append(f"[STAGE 3.5] Snapshot '{snap_name}' loaded.")
+        return True
+    except Exception as e:
+        logs.append(f"[STAGE 3.5] Snapshot init failed ({snap_name}): {e}")
+        return False
+
+
+def _get_parse_warnings(bf, snap_name: str, logs: list) -> list:
+    warnings_out = []
+    try:
+        bf.set_snapshot(snap_name)
+        df = bf.q.fileParseStatus().answer().frame()
+        for _, row in df.iterrows():
+            status = str(row.get("Status", ""))
+            fname  = str(row.get("Filename", ""))
+            if "fail" in status.lower() or "warn" in status.lower():
+                warnings_out.append(f"Parse {status}: {fname}")
+        try:
+            pw = bf.q.parseWarning().answer().frame()
+            for _, row in pw.iterrows():
+                text = str(row.get("Text", ""))
+                line = str(row.get("Line", ""))
+                if text:
+                    warnings_out.append(f"Line {line}: {text}")
+        except Exception:
+            pass
+        logs.append(f"[STAGE 3.5] Parse check: {len(warnings_out)} warnings")
+    except Exception as e:
+        logs.append(f"[STAGE 3.5] Parse warning query failed: {e}")
+    return warnings_out
+
+
+def _get_unused_structures(bf, snap_name: str, logs: list) -> list:
+    unused = []
+    try:
+        bf.set_snapshot(snap_name)
+        df = bf.q.unusedStructures().answer().frame()
+        for _, row in df.iterrows():
+            stype = str(row.get("Structure_Type", ""))
+            sname = str(row.get("Structure_Name", ""))
+            unused.append(f"Unused {stype}: {sname}")
+        logs.append(f"[STAGE 3.5] Unused structures: {len(unused)}")
+    except Exception as e:
+        logs.append(f"[STAGE 3.5] Unused structures query failed: {e}")
+    return unused
+
+
+def _get_undefined_references(bf, snap_name: str, logs: list) -> list:
+    undefined = []
+    try:
+        bf.set_snapshot(snap_name)
+        df = bf.q.undefinedReferences().answer().frame()
+        for _, row in df.iterrows():
+            ctx   = str(row.get("Context", ""))
+            name  = str(row.get("Undefined_Name", ""))
+            stype = str(row.get("Structure_Type", ""))
+            undefined.append(f"Undefined {stype} '{name}' referenced in {ctx}")
+        logs.append(f"[STAGE 3.5] Undefined references: {len(undefined)}")
+    except Exception as e:
+        logs.append(f"[STAGE 3.5] Undefined references query failed: {e}")
+    return undefined
+
+
+def _get_bgp_routes(bf, snap_name: str, logs: list) -> dict:
+    bgp_summary = {"total_prefixes": 0, "by_network": []}
+    try:
+        bf.set_snapshot(snap_name)
+        df = bf.q.bgpRib().answer().frame()
+        bgp_summary["total_prefixes"] = len(df)
+        for _, row in df.head(20).iterrows():
+            bgp_summary["by_network"].append({
+                "network":    str(row.get("Network", "")),
+                "next_hop":   str(row.get("Next_Hop", "")),
+                "as_path":    str(row.get("AS_Path", "")),
+                "local_pref": str(row.get("Local_Pref", "")),
+                "status":     str(row.get("Status", "")),
+            })
+        logs.append(f"[STAGE 3.5] BGP RIB: {len(df)} prefixes")
+    except Exception as e:
+        logs.append(f"[STAGE 3.5] BGP RIB query failed: {e}")
+    return bgp_summary
+
+
+def _get_routes(bf, snap_name: str, logs: list) -> dict:
+    route_summary = {"total": 0, "by_protocol": {}, "sample": []}
+    try:
+        bf.set_snapshot(snap_name)
+        df = bf.q.routes().answer().frame()
+        route_summary["total"] = len(df)
+        for _, row in df.iterrows():
+            proto = str(row.get("Protocol", "unknown"))
+            route_summary["by_protocol"][proto] = route_summary["by_protocol"].get(proto, 0) + 1
+        for _, row in df.head(15).iterrows():
+            route_summary["sample"].append({
+                "network":    str(row.get("Network", "")),
+                "protocol":   str(row.get("Protocol", "")),
+                "next_hop":   str(row.get("Next_Hop_Interface", "")),
+                "admin_dist": str(row.get("Admin_Distance", "")),
+                "metric":     str(row.get("Metric", "")),
+            })
+        logs.append(f"[STAGE 3.5] Route table: {route_summary['total']} routes ({route_summary['by_protocol']})")
+    except Exception as e:
+        logs.append(f"[STAGE 3.5] Routes query failed: {e}")
+    return route_summary
+
+
+def _get_ospf_edges(bf, snap_name: str, logs: list) -> list:
+    """Get OSPF topology (formal adjacency model) from Batfish dataplane."""
+    edges = []
+    try:
+        bf.set_snapshot(snap_name)
+        df = bf.q.ospfEdges().answer().frame()
+        for _, row in df.iterrows():
+            iface      = row.get("Interface", {})
+            rem_iface  = row.get("Remote_Interface", {})
+            edges.append({
+                "local_node":   str(iface.get("hostname", "") if isinstance(iface, dict) else ""),
+                "local_iface":  str(iface.get("interface", "") if isinstance(iface, dict) else ""),
+                "remote_node":  str(rem_iface.get("hostname", "") if isinstance(rem_iface, dict) else ""),
+                "remote_iface": str(rem_iface.get("interface", "") if isinstance(rem_iface, dict) else ""),
+            })
+        logs.append(f"[STAGE 3.5] OSPF edges (Batfish model): {len(edges)}")
+    except Exception as e:
+        logs.append(f"[STAGE 3.5] OSPF edges query failed: {e}")
+    return edges
+
+
+def _get_bgp_peers(bf, snap_name: str, logs: list) -> list:
+    """Get BGP peer relationships (formal config model) from Batfish."""
+    peers = []
+    try:
+        bf.set_snapshot(snap_name)
+        df = bf.q.bgpEdges().answer().frame()
+        for _, row in df.iterrows():
+            node     = row.get("Node", {})
+            rem_node = row.get("Remote_Node", {})
+            peers.append({
+                "local_as":     str(row.get("AS_Number", "")),
+                "local_node":   str(node.get("hostname", "") if isinstance(node, dict) else ""),
+                "remote_node":  str(rem_node.get("hostname", "") if isinstance(rem_node, dict) else ""),
+                "remote_ip":    str(row.get("Remote_IP", "")),
+                "session_type": str(row.get("Session_Type", "")),
+            })
+        logs.append(f"[STAGE 3.5] BGP peers (Batfish model): {len(peers)}")
+    except Exception as e:
+        logs.append(f"[STAGE 3.5] BGP peers query failed: {e}")
+    return peers
+
+
+def _differential_reachability(bf, pre_snap: str, post_snap: str, logs: list) -> dict:
+    """
+    Core Batfish query: formal proof of what changed in reachability between
+    pre and post config.  Uses route diff for single-device snapshots;
+    differentialReachability for multi-device topologies.
+    """
+    diff = {
+        "newly_unreachable": [],
+        "newly_reachable":   [],
+        "changed_paths":     [],
+        "summary":           "No differential analysis performed.",
+    }
+    try:
+        pre_routes  = bf.q.routes().answer(snapshot=pre_snap).frame()
+        post_routes = bf.q.routes().answer(snapshot=post_snap).frame()
+        pre_nets  = set(str(r) for r in pre_routes.get("Network",  []))
+        post_nets = set(str(r) for r in post_routes.get("Network", []))
+        lost    = pre_nets  - post_nets
+        gained  = post_nets - pre_nets
+        common  = pre_nets  & post_nets
+        diff["newly_unreachable"] = sorted(list(lost))[:20]
+        diff["newly_reachable"]   = sorted(list(gained))[:20]
+        diff["summary"] = (
+            f"Route delta: -{len(lost)} lost, +{len(gained)} gained, "
+            f"{len(common)} unchanged. "
+            + (f"⚠ LOST: {', '.join(sorted(lost)[:5])}" if lost else "✓ No route loss.")
+        )
+        # Try full differential reachability for multi-device topologies
+        try:
+            dr = bf.q.differentialReachability(
+                headers=HeaderConstraints(ipProtocols=["TCP", "UDP", "ICMP"]),
+                maxResults=30,
+            ).answer(snapshot=post_snap, reference_snapshot=pre_snap).frame()
+            if len(dr) > 0:
+                for _, row in dr.iterrows():
+                    diff["changed_paths"].append({
+                        "flow": str(row.get("Flow", "")),
+                        "type": str(row.get("Snapshot", "")),
+                    })
+                diff["summary"] += f" Differential flows affected: {len(dr)}."
+        except Exception:
+            pass
+        logs.append(f"[STAGE 3.5] Differential: lost={len(lost)} gained={len(gained)} "
+                    f"changed_paths={len(diff['changed_paths'])}")
+    except Exception as e:
+        logs.append(f"[STAGE 3.5] Differential reachability failed: {e}")
+        diff["summary"] = f"Differential analysis error: {e}"
+    return diff
+
+
+def stage_batfish_verification(
+    intent:        str,
+    healed_config: str,
+    raw:           dict,
+    logs:          list,
+    port:          int = 0,
+) -> dict:
+    """
+    STAGE 3.5 — Batfish Formal Network Verification.
+
+    Pipeline:
+      1. Extract running_config from Genie raw data
+      2. Build pre-change snapshot (current device config)
+      3. Apply healed_config to produce post-change config
+      4. Build post-change snapshot
+      5. Batfish queries: parse warnings, undefined refs, unused structures,
+         route comparison, OSPF edges, BGP peers, differential reachability
+      6. Return structured findings + formal_verdict for Stage 5 LLM
+
+    Formal verdict: SAFE | CAUTION | RISK | CRITICAL | UNKNOWN
+    Degrades gracefully: returns formal_verdict=UNKNOWN if Batfish unavailable.
+    """
+    logs.append("[STAGE 3.5] Batfish Formal Verification starting...")
+    ts             = int(time.time())
+    pre_snap_name  = f"pre_{port}_{ts}"
+    post_snap_name = f"post_{port}_{ts}"
+    hostname       = _extract_hostname_from_config(raw.get("running_config", ""))
+
+    result = {
+        "available":            False,
+        "hostname":             hostname,
+        "parse_warnings":       [],
+        "parse_warnings_post":  [],
+        "undefined_references": [],
+        "unused_structures":    [],
+        "pre_routes":           {},
+        "post_routes":          {},
+        "route_delta":          {},
+        "ospf_edges_post":      [],
+        "bgp_peers_post":       [],
+        "bgp_routes_post":      {},
+        "differential":         {},
+        "risk_indicators":      [],
+        "formal_verdict":       "UNKNOWN",
+        "batfish_note":         "",
+    }
+
+    bf = _connect_batfish(logs)
+    if bf is None:
+        result["batfish_note"] = (
+            "Batfish unavailable. Start with: "
+            "docker run -d --name batfish -p 9997:9997 -p 9996:9996 batfish/batfish && "
+            "pip install pybatfish pandas"
+        )
+        return result
+
+    result["available"]    = True
+    running_config         = raw.get("running_config", "")
+
+    if not running_config or not running_config.strip():
+        result["batfish_note"] = "No running_config in Genie data — Batfish requires config."
+        result["parse_warnings"].append("WARNING: running_config empty.")
+        logs.append("[STAGE 3.5] No running_config — limited analysis.")
+        return result
+
+    # Build pre/post snapshots
+    pre_dir  = _build_batfish_snapshot_dir(pre_snap_name,  running_config, hostname)
+    post_cfg = _apply_intent_to_config(running_config, healed_config)
+    post_dir = _build_batfish_snapshot_dir(post_snap_name, post_cfg, hostname)
+    logs.append(f"[STAGE 3.5] Pre: {pre_snap_name} ({len(running_config)} chars)")
+    logs.append(f"[STAGE 3.5] Post: {post_snap_name} ({len(post_cfg)} chars)")
+
+    pre_ok  = _run_batfish_snapshot(bf, pre_dir,  pre_snap_name,  logs)
+    post_ok = _run_batfish_snapshot(bf, post_dir, post_snap_name, logs)
+
+    if pre_ok:
+        result["parse_warnings"]       = _get_parse_warnings(bf,      pre_snap_name,  logs)
+        result["undefined_references"] = _get_undefined_references(bf, pre_snap_name, logs)
+        result["pre_routes"]           = _get_routes(bf,               pre_snap_name,  logs)
+
+    if post_ok:
+        result["parse_warnings_post"]  = _get_parse_warnings(bf,      post_snap_name, logs)
+        result["unused_structures"]    = _get_unused_structures(bf,    post_snap_name, logs)
+        result["post_routes"]          = _get_routes(bf,               post_snap_name, logs)
+        result["ospf_edges_post"]      = _get_ospf_edges(bf,           post_snap_name, logs)
+        result["bgp_peers_post"]       = _get_bgp_peers(bf,            post_snap_name, logs)
+        result["bgp_routes_post"]      = _get_bgp_routes(bf,           post_snap_name, logs)
+
+    if pre_ok and post_ok:
+        result["differential"] = _differential_reachability(bf, pre_snap_name, post_snap_name, logs)
+        result["route_delta"]  = {
+            "pre_total":     result["pre_routes"].get("total",  0),
+            "post_total":    result["post_routes"].get("total", 0),
+            "delta":         result["post_routes"].get("total", 0) - result["pre_routes"].get("total", 0),
+            "lost_sample":   result["differential"].get("newly_unreachable", [])[:10],
+            "gained_sample": result["differential"].get("newly_reachable",   [])[:10],
+        }
+
+    # Risk synthesis
+    risk = []
+    crit_parse = [w for w in result["parse_warnings_post"]
+                  if "fail" in w.lower() or "error" in w.lower()]
+    for w in crit_parse:
+        risk.append(f"CRITICAL [Batfish]: Config parse failure in post-change: {w}")
+    for u in result["undefined_references"][:5]:
+        risk.append(f"WARNING [Batfish]: {u}")
+    lost = result["differential"].get("newly_unreachable", [])
+    if lost:
+        risk.append(f"CRITICAL [Batfish]: {len(lost)} prefixes lost after change: {', '.join(lost[:5])}")
+    delta  = result["route_delta"].get("delta", 0)
+    pre_t  = result["route_delta"].get("pre_total", 0)
+    if pre_t > 0 and delta < -(pre_t * 0.1):
+        risk.append(f"WARNING [Batfish]: Route table shrank {abs(delta)} routes ({abs(delta)*100//pre_t}%)")
+    if not result.get("bgp_peers_post") and "bgp" in (healed_config or "").lower():
+        risk.append("WARNING [Batfish]: No BGP peers in post-change model — check BGP config.")
+    for u in result["unused_structures"][:3]:
+        risk.append(f"INFO [Batfish]: {u}")
+    result["risk_indicators"] = risk
+
+    # Formal verdict
+    has_critical = any("CRITICAL" in r for r in risk)
+    has_warning  = any("WARNING"  in r for r in risk)
+    no_route_loss = not lost
+    diff_summary  = result["differential"].get("summary", "")
+
+    if crit_parse:
+        result["formal_verdict"] = "CRITICAL"
+    elif has_critical:
+        result["formal_verdict"] = "RISK"
+    elif has_warning:
+        result["formal_verdict"] = "CAUTION"
+    elif pre_ok and post_ok and no_route_loss:
+        result["formal_verdict"] = "SAFE"
+    else:
+        result["formal_verdict"] = "UNKNOWN"
+
+    result["batfish_note"] = (
+        f"Formal verification: {result['formal_verdict']}. {diff_summary}"
+    )
+    logs.append(f"[STAGE 3.5] Verdict: {result['formal_verdict']} | "
+                f"risks={len(risk)} | route_delta={result['route_delta'].get('delta','?')}")
+
+    # Cleanup snapshot dirs
+    try:
+        shutil.rmtree(pre_dir,  ignore_errors=True)
+        shutil.rmtree(post_dir, ignore_errors=True)
+    except Exception:
+        pass
+
+    return result
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # STAGE 5: DYNAMIC LLM-DRIVEN CHANGE IMPACT DECISION
 # Completely protocol-agnostic: LLM + PyATS+Genie + MCP agent data drive
@@ -1926,7 +2445,8 @@ def _build_dynamic_device_context(intent: str, raw: dict, topology: dict,
 
 def stage_llm_decision(intent, healed_config, raw, topology, validation,
                         audit_trail, provider, logs,
-                        agent_risk_indicators=None, agent_results=None):
+                        agent_risk_indicators=None, agent_results=None,
+                        batfish_result=None):
     """
     STAGE 5: Fully dynamic, protocol-agnostic LLM-driven change impact decision.
 
@@ -1998,10 +2518,45 @@ CORE PRINCIPLES:
 6. Rollback commands must be derived from the ACTUAL device data (real process IDs, real interface names)
 7. If device is offline (no Genie data collected), clearly state limited visibility and recommend live collection first"""
 
+    # Summarise Batfish findings for the LLM
+    batfish_summary = {}
+    if batfish_result and batfish_result.get("available"):
+        batfish_summary = {
+            "formal_verdict":       batfish_result.get("formal_verdict", "UNKNOWN"),
+            "batfish_note":         batfish_result.get("batfish_note", ""),
+            "parse_warnings":       batfish_result.get("parse_warnings",      [])[:5],
+            "parse_warnings_post":  batfish_result.get("parse_warnings_post", [])[:5],
+            "undefined_references": batfish_result.get("undefined_references",[])[:5],
+            "unused_structures":    batfish_result.get("unused_structures",   [])[:3],
+            "route_delta":          batfish_result.get("route_delta",         {}),
+            "differential_summary": batfish_result.get("differential",        {}).get("summary",""),
+            "routes_lost":          batfish_result.get("differential",        {}).get("newly_unreachable",[])[:10],
+            "routes_gained":        batfish_result.get("differential",        {}).get("newly_reachable",  [])[:10],
+            "ospf_edges_count":     len(batfish_result.get("ospf_edges_post",  [])),
+            "bgp_peers_count":      len(batfish_result.get("bgp_peers_post",   [])),
+            "batfish_risks":        batfish_result.get("risk_indicators",      [])[:8],
+        }
+        logs.append(f"[STAGE 5] Batfish formal verdict: {batfish_summary['formal_verdict']}")
+    elif batfish_result:
+        batfish_summary = {
+            "formal_verdict": "UNKNOWN",
+            "batfish_note": batfish_result.get("batfish_note", "Batfish unavailable."),
+        }
+
+    bf_verdict = batfish_summary.get("formal_verdict", "UNKNOWN") if batfish_summary else "UNKNOWN"
+    bf_line = {
+        "SAFE":     "✓ BATFISH: Formal verification PASSED — no reachability loss.",
+        "CAUTION":  "⚠ BATFISH: Formal verification CAUTION — warnings present.",
+        "RISK":     "⚠ BATFISH: Formal verification RISK — route loss or config issues.",
+        "CRITICAL": "🚨 BATFISH: Formal verification CRITICAL — config parse failure or major route loss.",
+        "UNKNOWN":  "○ BATFISH: Not available (start Docker container on Windows host).",
+    }.get(bf_verdict, "○ BATFISH: Not available.")
+
     device_ctx_json = json.dumps({
         "change_intent": intent,
         "intent_classification": classification,
         "device_state_from_genie": ctx,
+        "batfish_formal_verification": batfish_summary,
         "mcp_agent_findings": agent_summary_for_llm,
         "critical_risk_count": len(crit_risks),
         "warning_risk_count": len(warn_risks),
@@ -2014,13 +2569,15 @@ CORE PRINCIPLES:
 
     prompt = f"""NETWORK CHANGE IMPACT ASSESSMENT — CAB EXPERT REVIEW
 
-DATA SOURCE: PyATS+Genie structured JSON collected via MCP (Netmiko SSH + pyATS Telnet)
-All device state data below was collected live from the device or from saved Genie snapshots.
-You are the decision engine — no protocol-specific rules override you.
+DATA SOURCES:
+  • PyATS+Genie: live device state via MCP → Netmiko SSH → PyATS+Genie
+  • Batfish: formal dataplane model (config snapshot)
+  • MCP Domain Agents: protocol-specific risk indicators
 
 {'⚠ OFFLINE MODE: Device was unreachable during collection. Genie data is empty. Recommend live collection before proceeding.' if ctx.get('offline_mode') else '✓ LIVE DATA: Device state collected via MCP → Netmiko SSH → PyATS+Genie'}
+{bf_line}
 
-STRUCTURED DEVICE STATE + AGENT FINDINGS:
+STRUCTURED DEVICE STATE + BATFISH FORMAL VERIFICATION + AGENT FINDINGS:
 {device_ctx_json}
 
 HEALED CONFIG (what will be applied):
@@ -2033,9 +2590,11 @@ Warnings: {ctx['validation_warnings']}
 INSTRUCTIONS:
 1. Analyze ALL protocol impact — not just one protocol. Correlate findings across OSPF, BGP, interfaces, routes.
 2. Reference SPECIFIC data from the device state (real IPs, real neighbor IDs, real prefix counts, real session states)
-3. Rollback commands must use ACTUAL process IDs and interface names from the device data
-4. If data is empty/offline, your verdict must reflect limited visibility
-5. The LLM (you) determines the verdict — there are no Python overrides
+3. Batfish formal_verdict is a dataplane MODEL result — if SAFE it means no routes lost in config model.
+   If RISK/CRITICAL, call it out explicitly. If UNKNOWN, note the limitation.
+4. Rollback commands must use ACTUAL process IDs and interface names from the device data
+5. If data is empty/offline, your verdict must reflect limited visibility
+6. The LLM (you) determines the verdict — integrate Genie live state + Batfish formal proofs + agent findings
 
 Output EXACTLY this format (no deviations, no extra text):
 DECISION: GO|NO-GO|PROCEED WITH CAUTION
@@ -3602,6 +4161,21 @@ def orchestrate():
         healed_config, audit_trail = stage_recursive_healing(intent, topology, critical_nodes, pipeline_provider, logs)
         validation = stage_variable_validation(healed_config, raw_twin, topology, logs)
 
+        # ── Stage 3.5: Batfish Formal Verification ─────────────────────────
+        # Config snapshots → Batfish dataplane model → formal reachability proof.
+        # Degrades gracefully if Batfish Docker is not running on Windows host.
+        batfish_result = stage_batfish_verification(
+            intent=intent,
+            healed_config=healed_config,
+            raw=raw_twin,
+            logs=logs,
+            port=port,
+        )
+        batfish_risks = batfish_result.get("risk_indicators", [])
+        if batfish_risks:
+            logs.append(f"[BATFISH] {len(batfish_risks)} risk indicators from formal verification "
+                        f"(verdict={batfish_result.get('formal_verdict','UNKNOWN')})")
+
         # ── Domain Expert Agent analysis via MCP (spec §3) ─────────────────
         # Agents call MCP tools (learn_feature_state, run_show_and_parse)
         # not raw inventory data — proper MCP chain even in analyze pipeline
@@ -3609,20 +4183,21 @@ def orchestrate():
         _mcp_for_analyze.build_testbed(channel="all")
         selected_agents_for_analyze = _select_agents_for_intent(intent)
         agent_results = run_domain_expert_agents(_mcp_for_analyze, intent, logs, selected_agents_for_analyze)
-        all_risk_indicators = []
+        all_risk_indicators = list(batfish_risks)   # start with Batfish formal findings
         for agt_r in agent_results.values():
             all_risk_indicators.extend(agt_r.get("risk_indicators", []))
         if all_risk_indicators:
-            logs.append(f"[AGENTS] Total risk indicators: {len(all_risk_indicators)}")
+            logs.append(f"[AGENTS] Total risk indicators (Batfish + agents): {len(all_risk_indicators)}")
         try: _mcp_for_analyze.disconnect()
         except: pass
 
-        # Pass agent risk findings into decision stage for correlated CCIE analysis
+        # Pass Batfish + agent findings into Stage 5 LLM for correlated CCIE analysis
         decision_result = stage_llm_decision(
             intent, healed_config, raw_twin, topology, validation,
             audit_trail, pipeline_provider, logs,
             agent_risk_indicators=all_risk_indicators,
             agent_results=agent_results,
+            batfish_result=batfish_result,
         )
 
         logs.append("[DONE] All stages complete.")
@@ -3642,6 +4217,7 @@ def orchestrate():
             "inventory": inventory,  # full inventory included — chat uses protocols section
             "agent_results": agent_results,
             "agent_risk_indicators": all_risk_indicators,
+            "batfish_result": batfish_result,
             "used_saved_inventory": use_saved and saved is not None,
             "logs": logs,
             "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
@@ -4536,25 +5112,603 @@ def set_provider():
     return jsonify({"status": "ok", "provider": _user_selected_provider})
 
 
+# ══════════════════════════════════════════════════════════════════════════════
+# IOS UPGRADE MODULE  (ios-upgrade skill)
+# ══════════════════════════════════════════════════════════════════════════════
+# Covers IOS, IOS-XE, IOS-XR, NX-OS.
+# Two endpoints:
+#   POST /ios_upgrade         → generate runbook (Markdown) + automation script (Python/Netmiko)
+#   POST /ios_upgrade_execute → live upgrade via Netmiko (SCP/TFTP + boot variable + reload)
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _detect_ios_platform(version_string: str, model: str = "") -> str:
+    """Detect IOS platform from version string / model.  Returns ios|iosxe|iosxr|nxos."""
+    vs = (version_string or "").lower()
+    ms = (model or "").lower()
+    if "nx-os" in vs or "nexus" in ms or "nxos" in vs:
+        return "nxos"
+    if "ios xr" in vs or "iosxr" in vs or "asr9" in ms or "ncs" in ms:
+        return "iosxr"
+    if "ios-xe" in vs or "ios xe" in vs or "cat9" in ms or "asr1" in ms or "isr4" in ms or "csr" in ms:
+        return "iosxe"
+    return "ios"
+
+
+def _ios_upgrade_pre_checks() -> list:
+    """Return pre-upgrade show commands (platform-agnostic IOS/IOS-XE)."""
+    return [
+        "show version",
+        "show inventory",
+        "show environment all",
+        "dir bootflash:",
+        "dir flash:",
+        "show ip route summary",
+        "show ip ospf neighbor",
+        "show bgp summary",
+        "show interfaces status",
+        "show redundancy",
+        "show processes cpu sorted | head 20",
+        "show processes memory sorted | head 20",
+    ]
+
+
+def _generate_upgrade_runbook(params: dict) -> str:
+    """Generate a Markdown upgrade runbook from params dict."""
+    p        = params
+    hostname = p.get("hostname", "<DEVICE>")
+    current  = p.get("current_version", "<CURRENT>")
+    target   = p.get("target_version", "<TARGET>")
+    image    = p.get("image_filename", "<IMAGE.bin>")
+    platform = p.get("platform", "iosxe")
+    server   = p.get("file_server_ip", "<SERVER-IP>")
+    method   = p.get("transfer_method", "scp")
+    win_maint = p.get("maintenance_window", "TBD")
+    rollback_timer = p.get("rollback_timer_min", 30)
+    expected_md5   = p.get("image_md5", "<MD5>")
+
+    if platform == "nxos":
+        boot_cmd   = f"install all nxos bootflash:{image}"
+        verify_cmd = f"show file bootflash:{image} md5sum"
+        dir_cmd    = "dir bootflash:"
+        rollback   = f"install all nxos bootflash:<OLD_IMAGE>"
+    elif platform == "iosxr":
+        boot_cmd   = f"install add source tftp://{server}/ {image}\ninstall activate <pkg>\ninstall commit"
+        verify_cmd = f"show install verify packages disk0:{image}"
+        dir_cmd    = "dir harddisk:\ndir disk0:"
+        rollback   = "install rollback to <commit_id>"
+    else:
+        boot_cmd   = (f"conf t\n  no boot system\n  boot system flash bootflash:{image}\nend\n"
+                      f"write memory\nshow boot")
+        verify_cmd = f"verify /md5 bootflash:{image} {expected_md5}"
+        dir_cmd    = "dir bootflash:\ndir flash:"
+        rollback   = (f"conf t\n  no boot system flash bootflash:{image}\n"
+                      f"  boot system flash bootflash:<OLD_IMAGE>\nend\nwrite memory\nreload")
+
+    if method == "scp":
+        transfer_cmd = f"copy scp://<USER>@{server}/<PATH>/{image} bootflash:"
+    else:
+        transfer_cmd = f"copy tftp://{server}/{image} bootflash:"
+
+    return f"""# IOS Upgrade Runbook — {hostname}
+
+| Field                | Value |
+|----------------------|-------|
+| Device               | {hostname} |
+| Current version      | {current} |
+| Target version       | {target} |
+| Platform             | {platform.upper()} |
+| Image file           | {image} |
+| File server          | {server} |
+| Transfer method      | {method.upper()} |
+| Maintenance window   | {win_maint} |
+| Rollback timer       | {rollback_timer} min |
+
+---
+
+## Pre-Change Checklist
+- [ ] Backup running config: `copy running-config tftp://{server}/{hostname}-pre-upgrade.cfg`
+- [ ] Verify reachability to device (ping/SSH)
+- [ ] Verify disk space ≥ 1.5× image size: `{dir_cmd}`
+- [ ] Record pre-upgrade state (see Step 3)
+- [ ] Confirm rollback plan is ready and tested
+
+## Step 1 — Pre-Upgrade State Snapshot
+```
+show version
+show ip route summary
+show ip ospf neighbor
+show bgp summary
+show interfaces status
+```
+
+## Step 2 — Image Transfer ({method.upper()})
+```
+{transfer_cmd}
+```
+
+## Step 3 — Image Verification (MD5)
+```
+{verify_cmd}
+```
+Expected MD5: `{expected_md5}`
+**STOP if MD5 mismatch — re-transfer and verify again.**
+
+## Step 4 — Set Boot Variable & Save
+```
+{boot_cmd}
+```
+
+## Step 5 — Schedule Reload (Rollback Timer)
+```
+reload in {rollback_timer}
+```
+This auto-reverts if device does not come back within {rollback_timer} minutes.
+
+## Step 6 — Execute Reload
+```
+reload
+```
+
+## Step 7 — Post-Upgrade Validation
+```
+show version | include Version
+show ip route summary
+show ip ospf neighbor
+show bgp summary
+show interfaces status
+```
+Cancel reload timer once post-checks pass: `reload cancel`
+
+### Pass/Fail Criteria
+| Check | Pass Condition | Fail Action |
+|-------|---------------|-------------|
+| Version | Shows `{target}` | Initiate rollback |
+| OSPF neighbors | Same count as pre | Investigate |
+| BGP sessions | All Established | Investigate / rollback |
+| Interface count | Same as pre | Check err-disabled |
+
+## Rollback Plan
+If post-checks fail:
+```
+{rollback}
+```
+
+---
+*Generated by NetBuilder Pro — IOS Upgrade Module*
+"""
+
+
+def _generate_upgrade_script(params: dict) -> str:
+    """Generate a Python/Netmiko upgrade automation script."""
+    p        = params
+    hostname = p.get("hostname", "device")
+    port_num = p.get("port", 22)
+    current  = p.get("current_version", "")
+    target   = p.get("target_version", "")
+    image    = p.get("image_filename", "image.bin")
+    platform = p.get("platform", "iosxe")
+    server   = p.get("file_server_ip", "192.168.1.100")
+    method   = p.get("transfer_method", "scp")
+    rollback_timer = p.get("rollback_timer_min", 30)
+    md5_hash = p.get("image_md5", "")
+    gns3_host = WINDOWS_IP
+
+    dev_type_map = {"ios": "cisco_ios", "iosxe": "cisco_ios", "iosxr": "cisco_xr", "nxos": "cisco_nxos"}
+    dev_type = dev_type_map.get(platform, "cisco_ios")
+
+    if method == "scp":
+        transfer_cli = f"copy scp://<USER>@{server}/<PATH>/{image} bootflash:"
+    else:
+        transfer_cli = f"copy tftp://{server}/{image} bootflash:"
+
+    if platform == "nxos":
+        verify_cli = f"show file bootflash:{image} md5sum"
+        boot_cli   = [f"install all nxos bootflash:{image}"]
+    elif platform == "iosxr":
+        verify_cli = f"show install verify packages disk0:{image}"
+        boot_cli   = [f"install add source tftp://{server}/ {image}",
+                      "install activate <PACKAGE_ID>",
+                      "install commit"]
+    else:
+        verify_cli = f"verify /md5 bootflash:{image} {md5_hash}"
+        boot_cli   = ["conf t", f"  no boot system", f"  boot system flash bootflash:{image}", "end",
+                      "write memory", "show boot"]
+
+    boot_cmds_repr = repr(boot_cli)
+
+    return f'''#!/usr/bin/env python3
+"""
+IOS Upgrade Automation Script — {hostname}
+Generated by NetBuilder Pro IOS Upgrade Module
+Platform: {platform.upper()} | Image: {image} | Target: {target}
+
+Usage:
+    python upgrade_{hostname}.py [--dry-run] [--skip-verify]
+
+Requires: pip install netmiko rich
+"""
+import sys, time, argparse
+from netmiko import ConnectHandler
+try:
+    from rich import print as rprint
+    from rich.table import Table
+    from rich.console import Console
+    console = Console()
+except ImportError:
+    console = None
+    rprint = print
+
+parser = argparse.ArgumentParser()
+parser.add_argument("--dry-run",     action="store_true", help="Print commands without executing")
+parser.add_argument("--skip-verify", action="store_true", help="Skip MD5 verification")
+args = parser.parse_args()
+
+DEVICE = {{
+    "device_type": "{dev_type}",
+    "host":        "{gns3_host}",
+    "port":        {port_num},
+    "username":    "admin",
+    "password":    "cisco",
+    "timeout":     60,
+    "session_log": f"upgrade_{hostname}_session.log",
+}}
+
+IMAGE          = "{image}"
+TARGET_VERSION = "{target}"
+EXPECTED_MD5   = "{md5_hash}"
+ROLLBACK_MIN   = {rollback_timer}
+TRANSFER_CLI   = "{transfer_cli}"
+VERIFY_CLI     = "{verify_cli}"
+BOOT_CMDS      = {boot_cmds_repr}
+
+PRE_CHECK_CMDS = [
+    "show version",
+    "dir bootflash:",
+    "show ip route summary",
+    "show ip ospf neighbor",
+    "show bgp summary",
+    "show interfaces status",
+]
+
+POST_CHECK_CMDS = [
+    "show version",
+    "show ip route summary",
+    "show ip ospf neighbor",
+    "show bgp summary",
+    "show interfaces status",
+]
+
+
+def run(net, cmd, timeout=120):
+    rprint(f"  [bold cyan]CMD>[/bold cyan] {{cmd}}")
+    if args.dry_run:
+        return f"[DRY-RUN] {{cmd}}"
+    return net.send_command(cmd, read_timeout=timeout)
+
+
+def step_banner(step, title):
+    rprint(f"\\n[bold yellow]── Step {{step}}: {{title}} ──[/bold yellow]")
+
+
+pre_state  = {{}}
+post_state = {{}}
+
+try:
+    rprint(f"[bold green]Connecting to {{DEVICE['host']}}:{{DEVICE['port']}}...[/bold green]")
+    net = ConnectHandler(**DEVICE)
+    rprint("[green]Connected.[/green]")
+
+    # Step 1 — Pre-checks
+    step_banner(1, "Pre-Upgrade State Snapshot")
+    for cmd in PRE_CHECK_CMDS:
+        out = run(net, cmd)
+        pre_state[cmd] = out
+        rprint(f"  [dim]{{out[:200]}}[/dim]")
+
+    # Step 2 — Transfer image
+    step_banner(2, f"Transfer Image ({IMAGE})")
+    rprint(f"  Transfer command: {{TRANSFER_CLI}}")
+    if not args.dry_run:
+        out = net.send_command(TRANSFER_CLI, read_timeout=1800, expect_string=r"[#$]")
+        rprint(f"  {{out[-500:]}}")
+
+    # Step 3 — Verify MD5
+    if not args.skip_verify and EXPECTED_MD5:
+        step_banner(3, "Image MD5 Verification")
+        out = run(net, VERIFY_CLI, timeout=120)
+        if EXPECTED_MD5 and EXPECTED_MD5.lower() not in out.lower():
+            rprint("[red]FAIL: MD5 mismatch! Aborting upgrade.[/red]")
+            net.disconnect()
+            sys.exit(1)
+        rprint("[green]MD5 verified.[/green]")
+
+    # Step 4 — Set boot variable
+    step_banner(4, "Set Boot Variable")
+    for cmd in BOOT_CMDS:
+        run(net, cmd)
+
+    # Step 5 — Set reload timer (safety net)
+    step_banner(5, f"Set Reload Timer ({{ROLLBACK_MIN}} min)")
+    run(net, f"reload in {{ROLLBACK_MIN}}")
+
+    # Step 6 — Reload
+    step_banner(6, "Execute Reload")
+    if not args.dry_run:
+        try:
+            net.send_command("reload", expect_string=r"confirm|yes", read_timeout=10)
+            net.send_command("y", expect_string=r"[#$]", read_timeout=10)
+        except Exception:
+            pass
+        net.disconnect()
+    rprint(f"[yellow]Device reloading. Waiting for recovery (max {{ROLLBACK_MIN*2}} min)...[/yellow]")
+
+    # Step 7 — Wait and reconnect
+    if not args.dry_run:
+        for attempt in range(ROLLBACK_MIN * 2):
+            time.sleep(30)
+            try:
+                net = ConnectHandler(**DEVICE)
+                rprint(f"[green]Device reachable after {{(attempt+1)*30}}s.[/green]")
+                break
+            except Exception:
+                rprint(f"  Attempt {{attempt+1}}: still waiting...")
+        else:
+            rprint("[red]FAIL: Device did not come back — rollback may have triggered.[/red]")
+            sys.exit(2)
+
+    # Step 8 — Post-checks
+    step_banner(8, "Post-Upgrade Validation")
+    for cmd in POST_CHECK_CMDS:
+        out = run(net, cmd)
+        post_state[cmd] = out
+
+    # Version check
+    ver_out = post_state.get("show version", "")
+    if TARGET_VERSION and TARGET_VERSION in ver_out:
+        rprint(f"[bold green]PASS: Running target version {{TARGET_VERSION}}[/bold green]")
+    else:
+        rprint(f"[bold red]WARN: Target version {{TARGET_VERSION}} not confirmed in 'show version'[/bold red]")
+
+    run(net, "reload cancel")
+    rprint("[bold green]Upgrade complete. Reload timer cancelled.[/bold green]")
+    net.disconnect()
+
+except Exception as e:
+    rprint(f"[bold red]UPGRADE FAILED: {{e}}[/bold red]")
+    sys.exit(3)
+'''
+
+
+@app.route('/ios_upgrade', methods=['POST'])
+def ios_upgrade():
+    """
+    IOS Upgrade Module — generate runbook + automation script.
+    (ios-upgrade skill: Steps 1-9 — plan, pre-checks, transfer, verify, boot, reload, post-validate, rollback)
+
+    POST body:
+      port             : int   — GNS3 console port (used to auto-detect platform from live device)
+      hostname         : str   — device hostname (default: auto-detected from inventory)
+      current_version  : str   — current IOS version
+      target_version   : str   — target IOS version
+      image_filename   : str   — e.g. c7200-adventerprisek9-mz.152-4.M7.bin
+      image_md5        : str   — expected MD5 hash
+      file_server_ip   : str   — TFTP/SCP server IP
+      transfer_method  : str   — "scp" | "tftp"  (default: scp)
+      maintenance_window: str  — e.g. "Sat 02:00-04:00 UTC"
+      rollback_timer_min: int  — minutes before auto-rollback (default: 30)
+      platform         : str   — ios|iosxe|iosxr|nxos  (auto-detected if omitted)
+
+    Returns:
+      runbook         : Markdown runbook string
+      upgrade_script  : Python/Netmiko script string
+      pre_check_cmds  : list of show commands to run before upgrade
+      platform        : detected/resolved platform
+      logs            : pipeline logs
+    """
+    data   = request.json or {}
+    port   = data.get("port", 5017)
+    logs   = [f"[IOS_UPGRADE] Starting upgrade plan for port={port}"]
+
+    try:
+        # Auto-detect platform from saved inventory (if available)
+        saved = SAVED_INVENTORY.get(str(port))
+        platform_hint = data.get("platform", "")
+        hostname      = data.get("hostname", "")
+
+        if saved and not platform_hint:
+            raw     = saved.get("raw_twin", {})
+            rc      = raw.get("running_config", "")
+            ver_out = str(raw.get("platform", {}) or "")
+            platform_hint = _detect_ios_platform(ver_out, "")
+            logs.append(f"[IOS_UPGRADE] Auto-detected platform: {platform_hint}")
+            if not hostname:
+                hostname = _extract_hostname_from_config(rc) or "router"
+
+        platform_hint = platform_hint or "iosxe"
+        hostname      = hostname or "router"
+
+        # Build params from request + auto-detected values
+        params = {
+            "hostname":          hostname,
+            "port":              port,
+            "current_version":   data.get("current_version", ""),
+            "target_version":    data.get("target_version", ""),
+            "image_filename":    data.get("image_filename", ""),
+            "image_md5":         data.get("image_md5", ""),
+            "file_server_ip":    data.get("file_server_ip", ""),
+            "transfer_method":   data.get("transfer_method", "scp"),
+            "maintenance_window":data.get("maintenance_window", "TBD"),
+            "rollback_timer_min":data.get("rollback_timer_min", 30),
+            "platform":          platform_hint,
+        }
+
+        runbook        = _generate_upgrade_runbook(params)
+        upgrade_script = _generate_upgrade_script(params)
+        pre_cmds       = _ios_upgrade_pre_checks()
+        logs.append(f"[IOS_UPGRADE] Runbook generated ({len(runbook)} chars)")
+        logs.append(f"[IOS_UPGRADE] Script generated ({len(upgrade_script)} chars)")
+
+        return jsonify({
+            "status":         "ok",
+            "runbook":        runbook,
+            "upgrade_script": upgrade_script,
+            "pre_check_cmds": pre_cmds,
+            "platform":       platform_hint,
+            "hostname":       hostname,
+            "params":         params,
+            "logs":           logs,
+        })
+
+    except Exception as e:
+        tb = traceback.format_exc()
+        return jsonify({"error": str(e), "traceback": tb, "logs": logs}), 500
+
+
+@app.route('/ios_upgrade_execute', methods=['POST'])
+def ios_upgrade_execute():
+    """
+    IOS Upgrade Execute — live upgrade via Netmiko.
+    (ios-upgrade skill: Steps 3-7 — transfer, verify, set boot, reload, post-validate)
+
+    POST body:
+      port              : int   — GNS3 console port (Netmiko connection)
+      image_filename    : str   — image already on server
+      file_server_ip    : str   — TFTP/SCP server
+      transfer_method   : str   — scp|tftp
+      image_md5         : str   — expected MD5
+      rollback_timer_min: int   — auto-rollback timeout (default 30)
+      platform          : str   — ios|iosxe|iosxr|nxos
+      dry_run           : bool  — if true, return CLI commands without executing
+
+    Returns live upgrade output + pass/fail for each step.
+    """
+    data     = request.json or {}
+    port     = data.get("port", 5017)
+    dry_run  = data.get("dry_run", True)   # default dry-run for safety
+    logs     = [f"[IOS_UPGRADE_EXEC] port={port} dry_run={dry_run}"]
+
+    if not NETMIKO_AVAILABLE:
+        return jsonify({"error": "netmiko not installed — pip install netmiko", "logs": logs}), 503
+
+    image    = data.get("image_filename", "")
+    server   = data.get("file_server_ip", "")
+    method   = data.get("transfer_method", "scp")
+    md5_hash = data.get("image_md5", "")
+    rollback = data.get("rollback_timer_min", 30)
+    platform = data.get("platform", "iosxe")
+
+    if not image:
+        return jsonify({"error": "image_filename required", "logs": logs}), 400
+
+    steps    = {}
+
+    try:
+        nm = ConnectHandler(
+            device_type="cisco_ios",
+            host=WINDOWS_IP,
+            port=port,
+            username=GNS3_USERNAME,
+            password=GNS3_PASSWORD,
+            timeout=30,
+        )
+        logs.append("[IOS_UPGRADE_EXEC] Netmiko connected.")
+
+        def _exec(cmd, timeout=120):
+            logs.append(f"  CMD: {cmd}")
+            if dry_run:
+                return f"[DRY-RUN] {cmd}"
+            return nm.send_command(cmd, read_timeout=timeout)
+
+        # Step 3: Check disk space
+        steps["disk_check"] = _exec("dir bootflash:")
+
+        # Step 4: Transfer
+        if method == "scp":
+            xfer = f"copy scp://<USER>@{server}/<PATH>/{image} bootflash:"
+        else:
+            xfer = f"copy tftp://{server}/{image} bootflash:"
+        logs.append(f"[IOS_UPGRADE_EXEC] Transfer command: {xfer}")
+        steps["transfer"] = xfer if dry_run else _exec(xfer, timeout=1800)
+
+        # Step 5: Verify MD5
+        if platform == "nxos":
+            verify_cmd = f"show file bootflash:{image} md5sum"
+        elif platform == "iosxr":
+            verify_cmd = f"show install verify packages disk0:{image}"
+        else:
+            verify_cmd = f"verify /md5 bootflash:{image} {md5_hash}"
+        verify_out = _exec(verify_cmd)
+        md5_ok = dry_run or (md5_hash and md5_hash.lower() in verify_out.lower())
+        steps["md5_verify"] = {"output": verify_out, "passed": md5_ok or not md5_hash}
+        if not md5_ok and md5_hash:
+            logs.append("[IOS_UPGRADE_EXEC] MD5 MISMATCH — aborting!")
+            nm.disconnect()
+            return jsonify({"error": "MD5 mismatch — upgrade aborted", "steps": steps, "logs": logs}), 400
+
+        # Step 6: Set boot variable (IOS/IOS-XE only)
+        if platform in ("ios", "iosxe"):
+            for cmd in ["conf t", f"  no boot system",
+                        f"  boot system flash bootflash:{image}", "end", "write memory"]:
+                steps[f"boot_{cmd[:20]}"] = _exec(cmd)
+        elif platform == "nxos":
+            steps["install_nxos"] = _exec(f"install all nxos bootflash:{image}", timeout=600)
+
+        # Step 7: Set rollback timer + reload
+        steps["reload_timer"] = _exec(f"reload in {rollback}")
+        if not dry_run:
+            try:
+                nm.send_command("reload", expect_string=r"confirm", read_timeout=15)
+                nm.send_command("y", read_timeout=10)
+            except Exception:
+                pass
+        steps["reload"] = "reload sent" if not dry_run else "[DRY-RUN] reload"
+
+        logs.append("[IOS_UPGRADE_EXEC] Upgrade steps complete. Monitor device for reload.")
+        nm.disconnect()
+
+        return jsonify({
+            "status":  "upgrade_initiated" if not dry_run else "dry_run_complete",
+            "steps":   steps,
+            "dry_run": dry_run,
+            "logs":    logs,
+            "note":    (f"Device will reload in {rollback} min. "
+                        "Run /ios_upgrade post-checks after device comes back online."),
+        })
+
+    except Exception as e:
+        tb = traceback.format_exc()
+        logs.append(f"[FATAL] {str(e)}")
+        return jsonify({"error": str(e), "traceback": tb, "steps": steps, "logs": logs}), 500
+
+
 if __name__ == '__main__':
-    print(f"[*] NetBuilder Pro v6 — SRE Platform with MCP + Genie Diff + Domain Expert Agents")
+    print(f"[*] NetBuilder Pro v6 — SRE Platform with MCP + Batfish + IOS Upgrade")
     print(f"[*] igraph: {IGRAPH_AVAILABLE} | pyATS: {PYATS_AVAILABLE} | Netmiko: {NETMIKO_AVAILABLE}")
+    print(f"[*] Batfish: {'ENABLED' if BATFISH_AVAILABLE else 'DISABLED (pip install pybatfish pandas)'} | host={BATFISH_HOST}:{BATFISH_PORT}")
     print(f"[*] Genie Diff engine: {'ENABLED' if PYATS_AVAILABLE else 'DISABLED (install pyats)'}")
     print(f"[*] MCP tools: 7 registered (connect/learn/parse/exec/snapshot/diff/assess)")
     print(f"[*] Domain Expert Agents: 7 (ospf/bgp/interface/acl/routing/cdp/vlan)")
-    print(f"[*] ─── New endpoints ──────────────────────────────────────────")
-    print(f"[*]   POST /mcp_pipeline    → Claude MCP tool-calling pipeline")
-    print(f"[*]   POST /take_snapshot   → Genie Learn pre/post snapshot")
-    print(f"[*]   POST /genie_diff      → Genie Diff(pre, post) → added/removed/modified")
-    print(f"[*]   POST /netmiko_exec    → SSH CLI via Netmiko")
-    print(f"[*]   POST /set_provider    → Select Claude or Ollama for all ops")
-    print(f"[*]   POST /agent_analysis  → Domain Expert Agents (ospf/bgp/interface/acl/routing/cdp/vlan)")
-    print(f"[*] ─── Domain Expert Agents ─────────────────────────────────")
-    print(f"[*]   Each agent returns: protocol, learn_object, critical_show_commands, analysis, risk_indicators")
-    print(f"[*]   MCP translates:    learn_object → device.learn(protocol)")
-    print(f"[*]   All 7 run in pipeline + available standalone via /agent_analysis")
-    print(f"[*] ─── LLM Routing ───────────────────────────────────────────")
-    print(f"[*] igraph: {IGRAPH_AVAILABLE} | pyATS: {PYATS_AVAILABLE}")
+    print(f"[*] ─── Pipeline Stages ───────────────────────────────────────")
+    print(f"[*]   Stage 2  → igraph centrality analysis")
+    print(f"[*]   Stage 3  → recursive healing (Claude/Ollama)")
+    print(f"[*]   Stage 3.5→ Batfish formal verification (OSPF/BGP/route diff)")
+    print(f"[*]   Stage 4  → variable validation")
+    print(f"[*]   Stage 5  → LLM CCIE decision (Genie+Batfish+Agents)")
+    print(f"[*] ─── Endpoints ─────────────────────────────────────────────")
+    print(f"[*]   POST /discover          → full device collection + inventory + topology")
+    print(f"[*]   POST /analyze           → 5-stage analysis pipeline (inc. Batfish Stage 3.5)")
+    print(f"[*]   POST /mcp_pipeline      → Claude MCP tool-calling pipeline")
+    print(f"[*]   POST /ios_upgrade       → generate upgrade runbook + Netmiko script")
+    print(f"[*]   POST /ios_upgrade_execute → live upgrade via Netmiko (default: dry-run)")
+    print(f"[*]   POST /take_snapshot     → Genie Learn pre/post snapshot")
+    print(f"[*]   POST /genie_diff        → Genie Diff(pre, post) → added/removed/modified")
+    print(f"[*]   POST /netmiko_exec      → SSH CLI via Netmiko")
+    print(f"[*]   POST /agent_analysis    → Domain Expert Agents (ospf/bgp/interface/acl/routing/cdp/vlan)")
+    print(f"[*]   POST /set_provider      → Select Claude or Ollama")
+    print(f"[*] ─── Batfish Setup ─────────────────────────────────────────")
+    print(f"[*]   docker run -d --name batfish -p 9997:9997 -p 9996:9996 batfish/batfish")
+    print(f"[*]   pip install pybatfish pandas")
+    print(f"[*]   BATFISH_HOST={BATFISH_HOST} (set env var to override)")
     print(f"[*] ─── LLM Routing ───────────────────────────────────────────")
     if ANTHROPIC_API_KEY:
         print(f"[*]   Pipeline + Chat  → Claude Haiku ({CLAUDE_PIPELINE_MODEL})")
@@ -4564,12 +5718,9 @@ if __name__ == '__main__':
     else:
         print(f"[*]   Pipeline + Chat  → Ollama fallback (ANTHROPIC_API_KEY not set)")
     print(f"[*]   On-Demand Ops    → Ollama local ({OLLAMA_MODEL})")
-    print(f"[*]   (discover, simulate, anomalies, healing always use Ollama)")
     print(f"[*] ─── Disk Persistence ──────────────────────────────────────")
     print(f"[*]   Data dir: {DATA_DIR}")
+    print(f"[*]   Batfish snapshots: {BATFISH_SNAPSHOT_DIR}")
     print(f"[*]   Inventories restored: {list(SAVED_INVENTORY.keys()) or 'none'}")
     print(f"[*] ──────────────────────────────────────────────────────────")
-    print(f"[*]   NOTE: If Claude shows 'credit balance too low', add credits")
-    print(f"[*]   at console.anthropic.com — Haiku costs ~$0.001 per pipeline run")
-    print(f"[*]   Tool auto-falls-back to Ollama if balance is exhausted.")
     app.run(host='0.0.0.0', port=5001, debug=False)
